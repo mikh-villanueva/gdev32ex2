@@ -57,6 +57,11 @@ void main()
 
     float spotDiff = max(dot(norm, spotLightVec), 0.0);
 
+    vec3 spotReflect = reflect(-spotLightVec, norm);
+    float spotSpec = pow(max(dot(viewDir, spotReflect), 0.0), 32);
+    vec3 spotSpecular = specColor * spotSpec * spotColor;
+    
+
     float theta = dot(normalize(-spotLightVec), normalize(spotDirection));
 
     float spotIntensity = 0.0;
@@ -64,7 +69,7 @@ void main()
     float epsilon = spotCutoff - outerCutoff;
     spotIntensity = clamp((theta - outerCutoff) / epsilon, 0.0, 1.0);
 
-    vec3 spotResult = spotColor * spotDiff * spotIntensity;
+    vec3 spotResult = spotColor * (spotDiff + ambColor + spotSpec) * spotIntensity;
     
     // COMBINE
     vec3 finalLight = finalColor + spotResult;

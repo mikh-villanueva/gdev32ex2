@@ -37,7 +37,7 @@ float lightHeight = 5.0f;
 
 // Spotlight
 glm::vec3 spotPosition(1.0f, 5.0f, 1.0f);
-glm::vec3 spotDirection(-1.0f, -1.0f, -1.0f);
+glm::vec3 spotDirection(0.0f, -1.0f, 0.0f);
 float spotX = 1.0f;
 float spotZ = 1.0f;
 
