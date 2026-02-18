@@ -1,4 +1,30 @@
 /******************************************************************************
+ * CONTROLS SUMMARY
+ *
+ * Camera Movement:
+ *   W/A/S/D   - Move forward/left/back/right
+ *   Mouse     - Look around (yaw/pitch)
+ *
+ * Point Light Movement:
+ *   T/G/F/H   - Move light X/Z (right/left, forward/back)
+ *   R/Y       - Move light up/down (Y axis)
+ *
+ * Spotlight Movement:
+ *   I/K/J/L   - Move spotlight X/Z (right/left, forward/back)
+ *   U/O       - Move spotlight up/down (Y axis)
+ *
+ * Spotlight Direction:
+ *   Arrow Keys - Change the direction the spotlight shines (yaw/pitch)
+ *
+ * Light Color/Height:
+ *   [ / ]      - Decrease/increase point light color intensity
+ *   = / -      - Raise/lower point light height
+ *
+ * Other:
+ *   ESC        - Exit program
+ ******************************************************************************/
+
+ /******************************************************************************
  * This demo draws a textured quadrilateral on screen, plus the user can change
  * its position, rotation, and scaling using the WASD and arrow keys.
  *
