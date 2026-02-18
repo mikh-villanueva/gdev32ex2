@@ -1,14 +1,19 @@
 /******************************************************************************
- * This demo draws a textured quadrilateral on screen, plus the user can change
- * its position, rotation, and scaling using the WASD and arrow keys.
- *
- * The main differences from the previous demo are:
- * - Transformation matrices are now passed to the vertex shader (as uniforms).
- * - The OpenGL GL_BLEND feature is enabled to allow for drawing transparent
- *   texels using the alpha channel.
- *
- * Happy hacking! - eric
- *****************************************************************************/
+*   Controls: 
+*     W - up
+*     A - left
+*     S - down
+*     D - right
+*     mouse - look around
+*     Arrow Keys - move spotlight
+*     [ - decrease light level
+*     ] - increase light level
+*     - - decrease point light height
+*     + - increase point light height
+*     Z - decrease specularity
+*     X - increase specularity
+*     F - toggle specular light
+******************************************************************************/
 
 #include <iostream>
 #include <glad/glad.h>
@@ -19,82 +24,75 @@
 // change this to your desired window attributes
 #define WINDOW_WIDTH  1280
 #define WINDOW_HEIGHT 720
-#define WINDOW_TITLE  "Hello Transform (use WASD and arrow keys)"
+#define WINDOW_TITLE  "Hello Transform (use WASD and mouse)"
 GLFWwindow *pWindow;
-
-glm::vec3 lightPosition;
-glm::vec3 lightColor = glm::vec3(1.0f, 1.0f, 1.0f);
-float specularity = 0.5f;
-float lightHeight = 2.0f;
-int pauseLight = 1;
-float pausedTime = 0.0f;
 
 // Cube faces - 6 sprites forming a 60x30x37.5 unit cube (15x as big as chest ~4x2x2.5)
 // Positioned to contain the existing objects inside
 // Front face (positive Z)
 float cube_front[] =
 {
-    -30.0f, -15.0f, 18.75f,  1.00f, 1.00f, 1.00f,  0.0f, 0.0f,
-    30.0f, -15.0f, 18.75f,  1.00f, 1.00f, 1.00f,  1.0f, 0.0f,
-    30.0f, 15.0f, 18.75f,  1.00f, 1.00f, 1.00f,  1.0f, 1.0f,
-    -30.0f, -15.0f, 18.75f,  1.00f, 1.00f, 1.00f,  0.0f, 0.0f,
-    30.0f, 15.0f, 18.75f,  1.00f, 1.00f, 1.00f,  1.0f, 1.0f,
-    -30.0f, 15.0f, 18.75f,  1.00f, 1.00f, 1.00f,  0.0f, 1.0f,
+    -30.0f, -15.0f, 18.75f,     1.00f, 1.00f, 1.00f,    0.0f, 0.0f,     0.0f, 0.0f, 1.0f,
+    30.0f, -15.0f, 18.75f,      1.00f, 1.00f, 1.00f,    1.0f, 0.0f,     0.0f, 0.0f, 1.0f,
+    30.0f, 15.0f, 18.75f,       1.00f, 1.00f, 1.00f,    1.0f, 1.0f,     0.0f, 0.0f, 1.0f,
+    -30.0f, -15.0f, 18.75f,     1.00f, 1.00f, 1.00f,    0.0f, 0.0f,     0.0f, 0.0f, 1.0f,
+    30.0f, 15.0f, 18.75f,       1.00f, 1.00f, 1.00f,    1.0f, 1.0f,     0.0f, 0.0f, 1.0f,
+    -30.0f, 15.0f, 18.75f,      1.00f, 1.00f, 1.00f,    0.0f, 1.0f,     0.0f, 0.0f, 1.0f,
 };
 
 // Back face (negative Z)
 float cube_back[] =
 {
-    30.0f, -15.0f, -18.75f,  1.00f, 1.00f, 1.00f,  0.0f, 0.0f,
-    -30.0f, -15.0f, -18.75f,  1.00f, 1.00f, 1.00f,  1.0f, 0.0f,
-    -30.0f, 15.0f, -18.75f,  1.00f, 1.00f, 1.00f,  1.0f, 1.0f,
-    30.0f, -15.0f, -18.75f,  1.00f, 1.00f, 1.00f,  0.0f, 0.0f,
-    -30.0f, 15.0f, -18.75f,  1.00f, 1.00f, 1.00f,  1.0f, 1.0f,
-    30.0f, 15.0f, -18.75f,  1.00f, 1.00f, 1.00f,  0.0f, 1.0f,
+    30.0f, -15.0f, -18.75f,     1.00f, 1.00f, 1.00f,    0.0f, 0.0f,     0.0f, 0.0f, -1.0f,
+    -30.0f, -15.0f, -18.75f,    1.00f, 1.00f, 1.00f,    1.0f, 0.0f,     0.0f, 0.0f, -1.0f,
+    -30.0f, 15.0f, -18.75f,     1.00f, 1.00f, 1.00f,    1.0f, 1.0f,     0.0f, 0.0f, -1.0f,
+    30.0f, -15.0f, -18.75f,     1.00f, 1.00f, 1.00f,    0.0f, 0.0f,     0.0f, 0.0f, -1.0f,
+    -30.0f, 15.0f, -18.75f,     1.00f, 1.00f, 1.00f,    1.0f, 1.0f,     0.0f, 0.0f, -1.0f,
+    30.0f, 15.0f, -18.75f,      1.00f, 1.00f, 1.00f,    0.0f, 1.0f,     0.0f, 0.0f, -1.0f,
 };
 
 // Left face (negative X)
 float cube_left[] =
 {
-    -30.0f, -15.0f, -18.75f,  1.00f, 1.00f, 1.00f,  0.0f, 0.0f,
-    -30.0f, -15.0f, 18.75f,  1.00f, 1.00f, 1.00f,  1.0f, 0.0f,
-    -30.0f, 15.0f, 18.75f,  1.00f, 1.00f, 1.00f,  1.0f, 1.0f,
-    -30.0f, -15.0f, -18.75f,  1.00f, 1.00f, 1.00f,  0.0f, 0.0f,
-    -30.0f, 15.0f, 18.75f,  1.00f, 1.00f, 1.00f,  1.0f, 1.0f,
-    -30.0f, 15.0f, -18.75f,  1.00f, 1.00f, 1.00f,  0.0f, 1.0f,
+    -30.0f, -15.0f, -18.75f,    1.00f, 1.00f, 1.00f,    0.0f, 0.0f,     -1.0f, 0.0f, 0.0f,
+    -30.0f, -15.0f, 18.75f,     1.00f, 1.00f, 1.00f,    1.0f, 0.0f,     -1.0f, 0.0f, 0.0f,
+    -30.0f, 15.0f, 18.75f,      1.00f, 1.00f, 1.00f,    1.0f, 1.0f,     -1.0f, 0.0f, 0.0f,
+    -30.0f, -15.0f, -18.75f,    1.00f, 1.00f, 1.00f,    0.0f, 0.0f,     -1.0f, 0.0f, 0.0f,
+    -30.0f, 15.0f, 18.75f,      1.00f, 1.00f, 1.00f,    1.0f, 1.0f,     -1.0f, 0.0f, 0.0f,
+    -30.0f, 15.0f, -18.75f,     1.00f, 1.00f, 1.00f,    0.0f, 1.0f,     -1.0f, 0.0f, 0.0f,
 };
 
 // Right face (positive X)
 float cube_right[] =
 {
-    30.0f, -15.0f, 18.75f,  1.00f, 1.00f, 1.00f,  0.0f, 0.0f,
-    30.0f, -15.0f, -18.75f,  1.00f, 1.00f, 1.00f,  1.0f, 0.0f,
-    30.0f, 15.0f, -18.75f,  1.00f, 1.00f, 1.00f,  1.0f, 1.0f,
-    30.0f, -15.0f, 18.75f,  1.00f, 1.00f, 1.00f,  0.0f, 0.0f,
-    30.0f, 15.0f, -18.75f,  1.00f, 1.00f, 1.00f,  1.0f, 1.0f,
-    30.0f, 15.0f, 18.75f,  1.00f, 1.00f, 1.00f,  0.0f, 1.0f,
+    30.0f, -15.0f, 18.75f,      1.00f, 1.00f, 1.00f,    0.0f, 0.0f,     1.0f, 0.0f, 0.0f,
+    30.0f, -15.0f, -18.75f,     1.00f, 1.00f, 1.00f,    1.0f, 0.0f,     1.0f, 0.0f, 0.0f,
+    30.0f, 15.0f, -18.75f,      1.00f, 1.00f, 1.00f,    1.0f, 1.0f,     1.0f, 0.0f, 0.0f,
+    30.0f, -15.0f, 18.75f,      1.00f, 1.00f, 1.00f,    0.0f, 0.0f,     1.0f, 0.0f, 0.0f,
+    30.0f, 15.0f, -18.75f,      1.00f, 1.00f, 1.00f,    1.0f, 1.0f,     1.0f, 0.0f, 0.0f,
+    30.0f, 15.0f, 18.75f,       1.00f, 1.00f, 1.00f,    0.0f, 1.0f,     1.0f, 0.0f, 0.0f,
 };
 
 // Top face (positive Y)
 float cube_top[] =
 {
-    -30.0f, 15.0f, 18.75f,  1.00f, 1.00f, 1.00f,  0.0f, 0.0f,
-    30.0f, 15.0f, 18.75f,  1.00f, 1.00f, 1.00f,  1.0f, 0.0f,
-    30.0f, 15.0f, -18.75f,  1.00f, 1.00f, 1.00f,  1.0f, 1.0f,
-    -30.0f, 15.0f, 18.75f,  1.00f, 1.00f, 1.00f,  0.0f, 0.0f,
-    30.0f, 15.0f, -18.75f,  1.00f, 1.00f, 1.00f,  1.0f, 1.0f,
-    -30.0f, 15.0f, -18.75f,  1.00f, 1.00f, 1.00f,  0.0f, 1.0f,
+    -30.0f, 15.0f, 18.75f,      1.00f, 1.00f, 1.00f,    0.0f, 0.0f,     0.0f, 1.0f, 0.0f,
+    30.0f, 15.0f, 18.75f,       1.00f, 1.00f, 1.00f,    1.0f, 0.0f,     0.0f, 1.0f, 0.0f,
+    30.0f, 15.0f, -18.75f,      1.00f, 1.00f, 1.00f,    1.0f, 1.0f,     0.0f, 1.0f, 0.0f,
+    -30.0f, 15.0f, 18.75f,      1.00f, 1.00f, 1.00f,    0.0f, 0.0f,     0.0f, 1.0f, 0.0f,
+    30.0f, 15.0f, -18.75f,      1.00f, 1.00f, 1.00f,    1.0f, 1.0f,     0.0f, 1.0f, 0.0f,
+    -30.0f, 15.0f, -18.75f,     1.00f, 1.00f, 1.00f,    0.0f, 1.0f,     0.0f, 1.0f, 0.0f,
 };
 
 // Bottom face (negative Y)
 float cube_bottom[] =
 {
-    -30.0f, -15.0f, -18.75f,  1.00f, 1.00f, 1.00f,  0.0f, 0.0f,
-    30.0f, -15.0f, -18.75f,  1.00f, 1.00f, 1.00f,  1.0f, 0.0f,
-    30.0f, -15.0f, 18.75f,  1.00f, 1.00f, 1.00f,  1.0f, 1.0f,
-    -30.0f, -15.0f, -18.75f,  1.00f, 1.00f, 1.00f,  0.0f, 0.0f,
-    30.0f, -15.0f, 18.75f,  1.00f, 1.00f, 1.00f,  1.0f, 1.0f,
-    -30.0f, -15.0f, 18.75f,  1.00f, 1.00f, 1.00f,  0.0f, 1.0f,
+    -30.0f, -15.0f, -18.75f,    1.00f, 1.00f, 1.00f,    0.0f, 0.0f,     0.0f, -1.0f, 0.0f,
+    30.0f, -15.0f, -18.75f,     1.00f, 1.00f, 1.00f,    1.0f, 0.0f,     0.0f, -1.0f, 0.0f,
+    30.0f, -15.0f, 18.75f,      1.00f, 1.00f, 1.00f,    1.0f, 1.0f,     0.0f, -1.0f, 0.0f,
+    -30.0f, -15.0f, -18.75f,    1.00f, 1.00f, 1.00f,    0.0f, 0.0f,     0.0f, -1.0f, 0.0f,
+    30.0f, -15.0f, 18.75f,      1.00f, 1.00f, 1.00f,    1.0f, 1.0f,     0.0f, -1.0f, 0.0f,
+    -30.0f, -15.0f, 18.75f,     1.00f, 1.00f, 1.00f,    0.0f, 1.0f,     0.0f, -1.0f, 0.0f,
 };
 
 
@@ -106,14 +104,41 @@ GLuint vao[NUM_MODELS];         // vertex array object (stores the render state 
 GLuint vbo[NUM_MODELS];         // vertex buffer object (reserves GPU memory for our vertex array)
 GLuint shader;      // combined vertex and fragment shader
 GLuint texture[NUM_MODELS];     // texture object
+GLuint goldCoinSpecMap;     // specular map
+bool useSpecMap = true;
 
-// variables controlling the camera position and rotation
-float  x            = 0.0f;  // camera X position (left/right)
-float  y            = 0.0f;  // camera Y position (up/down)
-float  z            = 5.0f;  // camera Z position (forward/backward)
-float  yaw          = 0.0f;  // rotation around Y axis (left/right look)
-float  pitch        = 0.0f;  // rotation around X axis (up/down look)
+// Camera
+glm::vec3 cameraPos   = glm::vec3(0.0f, 0.0f,  3.0f);
+glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
+glm::vec3 cameraUp    = glm::vec3(0.0f, 1.0f,  0.0f);
+float deltaTime = 0.0f;	// Time between current frame and last frame
+float lastFrame = 0.0f; // Time of last frame
+void processInput(GLFWwindow *window);
+void mouse_callback(GLFWwindow* window, double xpos, double ypos);
+float lastX = 320, lastY = 180;
+float yaw = -90.0f, pitch = 0.0f;
+float fov = 45.0f;
+bool firstMouse = true;
+
+// // variables controlling the camera position and rotation
+// float  x            = 0.0f;  // camera X position (left/right)
+// float  y            = 0.0f;  // camera Y position (up/down)
+// float  z            = 5.0f;  // camera Z position (forward/backward)
+// float  yaw          = 0.0f;  // rotation around Y axis (left/right look)
+// float  pitch        = 0.0f;  // rotation around X axis (up/down look)
 double previousTime = 0.0;
+
+// Point light
+glm::vec3 lightPosition(1.0f, 2.0f, 1.0f);
+glm::vec3 lightColor(100.0f, 100.0f, 100.0f);
+float specularity = 0.5f;
+float lightHeight = 2.0f;
+
+// Spotlight
+glm::vec3 spotPosition(1.0f, 5.0f, 1.0f);
+glm::vec3 spotDirection(0.0f, -1.0f, 0.0f);
+float spotX = 1.0f;
+float spotZ = 1.0f;
 
 // Animation points for coin
 glm::vec3 pathPointA = glm::vec3(-20.0f, -11.5f, -15.0f);
@@ -231,8 +256,8 @@ glm::mat4 getLookAtRotation(glm::vec3 from, glm::vec3 to)
 bool setup()
 {
     // function to load object data from a file (implementation omitted for brevity)
-    load_model("coin.txt", vertices[0]);
-    load_model("chest.txt", vertices[1]);
+    load_model("coin_vertices.txt", vertices[0]);
+    load_model("chest_vertices.txt", vertices[1]);
     
     // Load cube face vertices from static arrays
     vertices[2].assign(cube_front, cube_front + sizeof(cube_front) / sizeof(cube_front[0]));
@@ -267,6 +292,7 @@ bool setup()
         glEnableVertexAttribArray(0);
         glEnableVertexAttribArray(1);
         glEnableVertexAttribArray(2);
+        glEnableVertexAttribArray(3);
     }
 
     
@@ -278,6 +304,9 @@ bool setup()
 
     // load our texture
     texture[0] = gdevLoadTexture("goldcoin.jpg", GL_REPEAT, true, true); // https://www.freepik.com/free-photo/wood-close-up_969753.htm#fromView=keyword&page=1&position=35&uuid=e18b3cb0-8a52-497b-a8ea-bf73ce8d8fa9&query=Gold+texture
+    goldCoinSpecMap = gdevLoadTexture("goldcoin_specmap.jpg", GL_REPEAT, true, true);
+    if (!goldCoinSpecMap) return false;
+    
     texture[1] = gdevLoadTexture("wood_texture.jpg", GL_REPEAT, true, true); // https://www.hiclipart.com/free-transparent-background-png-clipart-labui
     
     // Load brick texture for all 6 cube faces
@@ -310,19 +339,32 @@ bool setup()
 // called by the main function to do rendering per frame
 void render()
 {
-    // light stuff
-    lightPosition = glm::vec3(1.0f, lightHeight, 1.0f);
+    glClearColor(0.1f, 0.2f, 0.3f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    glUniform3f(glGetUniformLocation(shader, "lightPosition"), lightPosition.x, lightPosition.y,  lightPosition.z);
-    glUniform3f(glGetUniformLocation(shader, "lightColor"), lightColor.x, lightColor.y, lightColor.z);
+    glUseProgram(shader);
+
+    // light stuff
+    lightPosition.y = lightHeight;
+    spotPosition = glm::vec3(spotX, spotPosition.y, spotZ);
+
+    glUniform3fv(glGetUniformLocation(shader, "lightPosition"), 1, glm::value_ptr(lightPosition));
+    glUniform3fv(glGetUniformLocation(shader, "lightColor"), 1, glm::value_ptr(lightColor));
     glUniform1f(glGetUniformLocation(shader, "specColor"), specularity);
+
+    glUniform3fv(glGetUniformLocation(shader, "spotPosition"), 1, glm::value_ptr(spotPosition));
+    glUniform3fv(glGetUniformLocation(shader, "spotDirection"), 1, glm::value_ptr(spotDirection));
+    glUniform1f(glGetUniformLocation(shader, "spotCutoff"), glm::cos(glm::radians(15.0f)));
+    glUniform3f(glGetUniformLocation(shader, "spotColor"), 1.0f, 1.0f, 1.0f);
+
+    glUniform3fv(glGetUniformLocation(shader, "cameraPos"), 1, &cameraPos[0]);
 
     // find the elapsed time since the last frame
     double currentTime = glfwGetTime();
     double elapsedTime = (currentTime - previousTime);
-    float camSpeed = 5.0f; // units per second
-    float moveSpeed = elapsedTime * camSpeed;
-    float turnSpeed = elapsedTime * (camSpeed/2);
+    // float camSpeed = 5.0f; // units per second
+    // float moveSpeed = elapsedTime * camSpeed;
+    // float turnSpeed = elapsedTime * (camSpeed/2);
     previousTime = currentTime;
 
     // Update animation - move coin along the path
@@ -341,95 +383,112 @@ void render()
     }
     chestPos = getChestPositionOnPath(chestPathTime, chestPathSegment);
 
-    // Camera movement controls (WASD) - relative to camera forward direction
-    // Calculate forward and right vectors from current yaw and pitch
-    glm::vec3 cameraForward = glm::normalize(glm::vec3(
-        sin(yaw),
-        0.0f,  // don't move up/down based on pitch
-        -cos(yaw)
-    ));
-    glm::vec3 cameraRight = glm::normalize(glm::cross(cameraForward, glm::vec3(0.0f, 1.0f, 0.0f)));
+    // // Camera movement controls (WASD) - relative to camera forward direction
+    // // Calculate forward and right vectors from current yaw and pitch
+    // glm::vec3 cameraForward = glm::normalize(glm::vec3(
+    //     sin(yaw),
+    //     0.0f,  // don't move up/down based on pitch
+    //     -cos(yaw)
+    // ));
+    // glm::vec3 cameraRight = glm::normalize(glm::cross(cameraForward, glm::vec3(0.0f, 1.0f, 0.0f)));
     
-    // Apply movement based on camera direction
-    if (glfwGetKey(pWindow, GLFW_KEY_W) == GLFW_PRESS) {
-        x += cameraForward.x * moveSpeed;  // forward
-        z += cameraForward.z * moveSpeed;
-    }
-    if (glfwGetKey(pWindow, GLFW_KEY_S) == GLFW_PRESS) {
-        x -= cameraForward.x * moveSpeed;  // backward
-        z -= cameraForward.z * moveSpeed;
-    }
-    if (glfwGetKey(pWindow, GLFW_KEY_A) == GLFW_PRESS) {
-        x -= cameraRight.x * moveSpeed;  // step left
-        z -= cameraRight.z * moveSpeed;
-    }
-    if (glfwGetKey(pWindow, GLFW_KEY_D) == GLFW_PRESS) {
-        x += cameraRight.x * moveSpeed;  // step right
-        z += cameraRight.z * moveSpeed;
-    }
-    if (glfwGetKey(pWindow, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
-        x += cameraRight.x * moveSpeed;  // step up
-        z += cameraRight.z * moveSpeed;
-    }
-    if (glfwGetKey(pWindow, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) {
-        x += cameraRight.x * moveSpeed;  // step down
-        z += cameraRight.z * moveSpeed;
-    }
+    // // Apply movement based on camera direction
+    // if (glfwGetKey(pWindow, GLFW_KEY_W) == GLFW_PRESS) {
+    //     x += cameraForward.x * moveSpeed;  // forward
+    //     z += cameraForward.z * moveSpeed;
+    // }
+    // if (glfwGetKey(pWindow, GLFW_KEY_S) == GLFW_PRESS) {
+    //     x -= cameraForward.x * moveSpeed;  // backward
+    //     z -= cameraForward.z * moveSpeed;
+    // }
+    // if (glfwGetKey(pWindow, GLFW_KEY_A) == GLFW_PRESS) {
+    //     x -= cameraRight.x * moveSpeed;  // step left
+    //     z -= cameraRight.z * moveSpeed;
+    // }
+    // if (glfwGetKey(pWindow, GLFW_KEY_D) == GLFW_PRESS) {
+    //     x += cameraRight.x * moveSpeed;  // step right
+    //     z += cameraRight.z * moveSpeed;
+    // }
+    // if (glfwGetKey(pWindow, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
+    //     x += cameraRight.x * moveSpeed;  // step up
+    //     z += cameraRight.z * moveSpeed;
+    // }
+    // if (glfwGetKey(pWindow, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) {
+    //     x += cameraRight.x * moveSpeed;  // step down
+    //     z += cameraRight.z * moveSpeed;
+    // }
 
-    float cameraBoundX = 28.0f;
-    float cameraBoundZ = 17.0f;
-    if (x > cameraBoundX) x = cameraBoundX;
-    if (x < -cameraBoundX) x = -cameraBoundX;
-    if (z > cameraBoundZ) z = cameraBoundZ;
-    if (z < -cameraBoundZ) z = -cameraBoundZ;
+    // float cameraBoundX = 28.0f;
+    // float cameraBoundZ = 17.0f;
+    // if (x > cameraBoundX) x = cameraBoundX;
+    // if (x < -cameraBoundX) x = -cameraBoundX;
+    // if (z > cameraBoundZ) z = cameraBoundZ;
+    // if (z < -cameraBoundZ) z = -cameraBoundZ;
 
-    if (glfwGetKey(pWindow, GLFW_KEY_LEFT) == GLFW_PRESS)
-        yaw -= turnSpeed; // turn left
-    if (glfwGetKey(pWindow, GLFW_KEY_RIGHT) == GLFW_PRESS)
-        yaw += turnSpeed; // turn right
-    if (glfwGetKey(pWindow, GLFW_KEY_UP) == GLFW_PRESS)
-        pitch += turnSpeed; // look up
-    if (glfwGetKey(pWindow, GLFW_KEY_DOWN) == GLFW_PRESS)
-        pitch -= turnSpeed; // look down
-    // limits for camera pitch
-    if (pitch > 1.5f)
-        pitch = 1.5f;
-    if (pitch < -1.5f)
-        pitch = -1.5f;
+    // if (glfwGetKey(pWindow, GLFW_KEY_LEFT) == GLFW_PRESS)
+    //     yaw -= turnSpeed; // turn left
+    // if (glfwGetKey(pWindow, GLFW_KEY_RIGHT) == GLFW_PRESS)
+    //     yaw += turnSpeed; // turn right
+    // if (glfwGetKey(pWindow, GLFW_KEY_UP) == GLFW_PRESS)
+    //     pitch += turnSpeed; // look up
+    // if (glfwGetKey(pWindow, GLFW_KEY_DOWN) == GLFW_PRESS)
+    //     pitch -= turnSpeed; // look down
+    // // limits for camera pitch
+    // if (pitch > 1.5f)
+    //     pitch = 1.5f;
+    // if (pitch < -1.5f)
+    //     pitch = -1.5f;
+
+    // Projection
+    glm::mat4 projection = glm::perspective(
+        glm::radians(45.0f),
+        (float)WINDOW_WIDTH / WINDOW_HEIGHT,
+        0.1f, 100.0f);
+    glUniformMatrix4fv(glGetUniformLocation(shader, "projectionTransform"),
+                       1, GL_FALSE, glm::value_ptr(projection));
+
+    // View
+    glm::mat4 view = glm::lookAt(
+        cameraPos,
+        cameraPos + cameraFront,
+        cameraUp);
+    glUniformMatrix4fv(glGetUniformLocation(shader, "viewTransform"),
+                       1, GL_FALSE, glm::value_ptr(view));
+
 
     glClearColor(0.0f, 0.3f, 0.3f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     glUseProgram(shader);
 
-    // ... set up the projection matrix...
-    glm::mat4 projectionTransform;
-    projectionTransform = glm::perspective(glm::radians(45.0f),
-                                           (float) WINDOW_WIDTH / WINDOW_HEIGHT,
-                                           0.1f, 100.0f);
-    glUniformMatrix4fv(glGetUniformLocation(shader, "projectionTransform"),
-                       1, GL_FALSE, glm::value_ptr(projectionTransform));
+    // // ... set up the projection matrix...
+    // glm::mat4 projectionTransform;
+    // projectionTransform = glm::perspective(glm::radians(45.0f),
+    //                                        (float) WINDOW_WIDTH / WINDOW_HEIGHT,
+    //                                        0.1f, 100.0f);
+    // glUniformMatrix4fv(glGetUniformLocation(shader, "projectionTransform"),
+    //                    1, GL_FALSE, glm::value_ptr(projectionTransform));
 
-    glm::mat4 viewTransform;
-    glm::mat4 normalTransform;
+    // glm::mat4 viewTransform;
+    // glm::mat4 normalTransform;
     
-    // Calculate look direction from yaw and pitch
-    glm::vec3 lookDirection = glm::vec3(
-        sin(yaw) * cos(pitch),
-        sin(pitch),
-        -cos(yaw) * cos(pitch)
-    );
+    // // Calculate look direction from yaw and pitch
+    // glm::vec3 lookDirection = glm::vec3(
+    //     sin(yaw) * cos(pitch),
+    //     sin(pitch),
+    //     -cos(yaw) * cos(pitch)
+    // );
     
-    viewTransform = glm::lookAt(
-        glm::vec3(x, y, z),
-        glm::vec3(x, y, z) + lookDirection,
-        glm::vec3(0.0f, 1.0f, 0.0f)
-    );
-    glUniformMatrix4fv(glGetUniformLocation(shader, "viewTransform"),
-                       1, GL_FALSE, glm::value_ptr(viewTransform));
+    // viewTransform = glm::lookAt(
+    //     glm::vec3(x, y, z),
+    //     glm::vec3(x, y, z) + lookDirection,
+    //     glm::vec3(0.0f, 1.0f, 0.0f)
+    // );
+    // glUniformMatrix4fv(glGetUniformLocation(shader, "viewTransform"),
+    //                    1, GL_FALSE, glm::value_ptr(viewTransform));
 
     
-
+    glUniform1i(glGetUniformLocation(shader, "useSpecMap"), useSpecMap);
     // Draw coin at its animated position
     glm::vec3 nextPointCoin = getNextWaypoint(coinPathSegment);
     glm::mat4 coinRotation = getLookAtRotation(coinPos, nextPointCoin);
@@ -439,16 +498,21 @@ void render()
     glUniformMatrix4fv(glGetUniformLocation(shader, "modelTransform"),
                         1, GL_FALSE, glm::value_ptr(modelTransform));
     // Normal Transform for the coin
-    normalTransform = glm::transpose(glm::inverse(modelTransform));
+    glm::mat4 normalTransform = glm::transpose(glm::inverse(modelTransform));
     glUniformMatrix4fv(glGetUniformLocation(shader, "normalTransform"), 
                         1, GL_FALSE, glm::value_ptr(normalTransform));
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texture[0]);
+    glUniform1i(glGetUniformLocation(shader, "shaderTexture"), 0);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, goldCoinSpecMap);
+    glUniform1i(glGetUniformLocation(shader, "specularMap"), 1);
     glBindVertexArray(vao[0]);
     glDrawArrays(GL_TRIANGLES, 0, vertices[0].size() / (8));
 
-    
+
+    // glUniform1i(glGetUniformLocation(shader, "useSpecMap"), false);
     // Draw chest at its animated position
     glm::vec3 nextPointChest = getNextWaypoint(chestPathSegment);
     glm::mat4 chestRotation = getLookAtRotation(chestPos, nextPointChest);
@@ -533,6 +597,10 @@ int main(int argc, char** argv)
     glfwSetKeyCallback(pWindow, handleKeys);
     glfwSetFramebufferSizeCallback(pWindow, handleResize);
 
+    // enable mouse
+    glfwSetCursorPosCallback(pWindow, mouse_callback);
+    glfwSetInputMode(pWindow, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
     // don't miss any momentary keypresses
     glfwSetInputMode(pWindow, GLFW_STICKY_KEYS, GLFW_TRUE);
 
@@ -545,6 +613,7 @@ int main(int argc, char** argv)
         // do rendering in a loop until the user closes the window
         while (! glfwWindowShouldClose(pWindow))
         {
+            processInput(pWindow);
             // render our next frame
             // (by default, GLFW uses double-buffering with a front and back buffer;
             // all drawing goes to the back buffer, so the frame does not get shown yet)
@@ -562,3 +631,74 @@ int main(int argc, char** argv)
     glfwTerminate();
     return 0;
 }
+
+void processInput(GLFWwindow *window)
+{
+    float currentFrame = glfwGetTime();
+    deltaTime = currentFrame - lastFrame;
+    lastFrame = currentFrame;  
+    const float cameraSpeed = 5.0f * deltaTime; // adjust accordingly
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+        cameraPos += cameraSpeed * cameraFront;
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+        cameraPos -= cameraSpeed * cameraFront;
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+        cameraPos -= glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+        cameraPos += glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
+    if (glfwGetKey(window, GLFW_KEY_LEFT_BRACKET) == GLFW_PRESS)
+        lightColor -= 0.5f;
+    if (glfwGetKey(window, GLFW_KEY_RIGHT_BRACKET) == GLFW_PRESS)
+        lightColor += 0.5f;
+    if (glfwGetKey(window, GLFW_KEY_EQUAL) == GLFW_PRESS)
+        lightHeight += 0.5f;
+    if (glfwGetKey(window, GLFW_KEY_MINUS) == GLFW_PRESS)
+        lightHeight -= 0.5f;
+    if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
+        spotX += 0.1f;
+    if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
+        spotX -= 0.1f;
+    if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
+        spotZ += 0.1f;
+    if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
+        spotZ -= 0.1f;
+    if (glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS)
+        specularity -= 0.5f;
+    if (glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS)
+        specularity += 0.5f;
+    if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS)
+        if (useSpecMap) useSpecMap = false; else useSpecMap = true;
+}
+
+void mouse_callback(GLFWwindow* window, double xpos, double ypos)
+{
+    if (firstMouse)
+    {
+        lastX = xpos;
+        lastY = ypos;
+        firstMouse = false;
+    }
+    
+    float xoffset = xpos - lastX;
+    float yoffset = lastY - ypos; // reversed since y-coordinates range from bottom to top
+    lastX = xpos;
+    lastY = ypos;
+
+    const float sensitivity = 0.1f;
+    xoffset *= sensitivity;
+    yoffset *= sensitivity;
+
+    yaw   += xoffset;
+    pitch += yoffset;
+
+    if(pitch > 89.0f)
+        pitch = 89.0f;
+    if(pitch < -89.0f)
+        pitch = -89.0f;
+
+    glm::vec3 direction;
+    direction.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
+    direction.y = sin(glm::radians(pitch));
+    direction.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
+    cameraFront = glm::normalize(direction);
+};
