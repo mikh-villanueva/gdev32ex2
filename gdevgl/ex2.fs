@@ -20,7 +20,7 @@ uniform vec3 lightPosition;
 uniform vec3 lightColor;
 uniform float specColor;
 
-float ambColor = 0.3;
+float ambColor = 0.7;
 float constant = 1.0f;
 float linear = 0.22f;
 float quadratic = 0.2f;
