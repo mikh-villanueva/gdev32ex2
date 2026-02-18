@@ -34,9 +34,6 @@ glm::vec3 spotDirection(0.0f, -1.0f, 0.0f);
 float spotX = 1.0f;
 float spotZ = 1.0f;
 
-// Camera position for lighting calculations (updated per frame)
-glm::vec3 cameraPos(0.0f, 0.0f, 3.0f);
-
 // Cube faces - 6 sprites forming a 60x30x37.5 unit cube (15x as big as chest ~4x2x2.5)
 // Positioned to contain the existing objects inside
 // Front face (positive Z)
@@ -116,12 +113,20 @@ GLuint vbo[NUM_MODELS];         // vertex buffer object (reserves GPU memory for
 GLuint shader;      // combined vertex and fragment shader
 GLuint texture[NUM_MODELS];     // texture object
 
+glm::vec3 cameraPos   = glm::vec3(0.0f, 0.0f,  3.0f);
+glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
+glm::vec3 cameraUp    = glm::vec3(0.0f, 1.0f,  0.0f);
+
+float deltaTime = 0.0f;	// Time between current frame and last frame
+float lastFrame = 0.0f; // Time of last frame
+void processInput(GLFWwindow *window);
+void mouse_callback(GLFWwindow* window, double xpos, double ypos);
+
 // variables controlling the camera position and rotation
-float  x            = 0.0f;  // camera X position (left/right)
-float  y            = 0.0f;  // camera Y position (up/down)
-float  z            = 5.0f;  // camera Z position (forward/backward)
-float  yaw          = 0.0f;  // rotation around Y axis (left/right look)
-float  pitch        = 0.0f;  // rotation around X axis (up/down look)
+float lastX = 320, lastY = 180;
+float yaw = -90.0f, pitch = 0.0f;
+float fov = 45.0f;
+bool firstMouse = true;
 double previousTime = 0.0;
 
 // Animation points for coin
@@ -361,31 +366,7 @@ void render()
     ));
     glm::vec3 cameraRight = glm::normalize(glm::cross(cameraForward, glm::vec3(0.0f, 1.0f, 0.0f)));
 
-    // Apply movement based on camera direction
-    if (glfwGetKey(pWindow, GLFW_KEY_W) == GLFW_PRESS) {
-        x += cameraForward.x * moveSpeed;  // forward
-        z += cameraForward.z * moveSpeed;
-    }
-    if (glfwGetKey(pWindow, GLFW_KEY_S) == GLFW_PRESS) {
-        x -= cameraForward.x * moveSpeed;  // backward
-        z -= cameraForward.z * moveSpeed;
-    }
-    if (glfwGetKey(pWindow, GLFW_KEY_A) == GLFW_PRESS) {
-        x -= cameraRight.x * moveSpeed;  // step left
-        z -= cameraRight.z * moveSpeed;
-    }
-    if (glfwGetKey(pWindow, GLFW_KEY_D) == GLFW_PRESS) {
-        x += cameraRight.x * moveSpeed;  // step right
-        z += cameraRight.z * moveSpeed;
-    }
-    if (glfwGetKey(pWindow, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
-        x += cameraRight.x * moveSpeed;  // step up
-        z += cameraRight.z * moveSpeed;
-    }
-    if (glfwGetKey(pWindow, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) {
-        x += cameraRight.x * moveSpeed;  // step down
-        z += cameraRight.z * moveSpeed;
-    }
+    // Camera movement is handled in processInput() for WASD and mouse look
 
 
     // --- Lighting controls (from box.cpp) ---
@@ -429,24 +410,12 @@ void render()
 
     float cameraBoundX = 28.0f;
     float cameraBoundZ = 17.0f;
-    if (x > cameraBoundX) x = cameraBoundX;
-    if (x < -cameraBoundX) x = -cameraBoundX;
-    if (z > cameraBoundZ) z = cameraBoundZ;
-    if (z < -cameraBoundZ) z = -cameraBoundZ;
+    if (cameraPos.x > cameraBoundX) cameraPos.x = cameraBoundX;
+    if (cameraPos.x < -cameraBoundX) cameraPos.x = -cameraBoundX;
+    if (cameraPos.z > cameraBoundZ) cameraPos.z = cameraBoundZ;
+    if (cameraPos.z < -cameraBoundZ) cameraPos.z = -cameraBoundZ;
 
-    if (glfwGetKey(pWindow, GLFW_KEY_LEFT) == GLFW_PRESS)
-        yaw -= turnSpeed; // turn left
-    if (glfwGetKey(pWindow, GLFW_KEY_RIGHT) == GLFW_PRESS)
-        yaw += turnSpeed; // turn right
-    if (glfwGetKey(pWindow, GLFW_KEY_UP) == GLFW_PRESS)
-        pitch += turnSpeed; // look up
-    if (glfwGetKey(pWindow, GLFW_KEY_DOWN) == GLFW_PRESS)
-        pitch -= turnSpeed; // look down
-    // limits for camera pitch
-    if (pitch > 1.5f)
-        pitch = 1.5f;
-    if (pitch < -1.5f)
-        pitch = -1.5f;
+    // Camera turning is handled by mouse_callback; arrow keys are not used for camera
 
     glClearColor(0.0f, 0.3f, 0.3f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -458,9 +427,6 @@ void render()
     // Update light and spot positions if animated
     lightPosition.y = lightHeight;
     spotPosition = glm::vec3(spotX, spotPosition.y, spotZ);
-
-    // Camera position for lighting (matches current camera)
-    cameraPos = glm::vec3(x, y, z);
 
     glUniform3fv(glGetUniformLocation(shader, "lightPosition"), 1, &lightPosition[0]);
     glUniform3fv(glGetUniformLocation(shader, "lightColor"), 1, &lightColor[0]);
@@ -481,6 +447,14 @@ void render()
     glUniformMatrix4fv(glGetUniformLocation(shader, "projectionTransform"),
                        1, GL_FALSE, glm::value_ptr(projectionTransform));
 
+    // View
+    glm::mat4 view = glm::lookAt(
+        cameraPos,
+        cameraPos + cameraFront,
+        cameraUp);
+    glUniformMatrix4fv(glGetUniformLocation(shader, "viewTransform"),
+                       1, GL_FALSE, glm::value_ptr(view));
+
     glm::mat4 viewTransform;
     // Calculate look direction from yaw and pitch
     glm::vec3 lookDirection = glm::vec3(
@@ -488,13 +462,15 @@ void render()
         sin(pitch),
         -cos(yaw) * cos(pitch)
     );
-    viewTransform = glm::lookAt(
-        glm::vec3(x, y, z),
-        glm::vec3(x, y, z) + lookDirection,
-        glm::vec3(0.0f, 1.0f, 0.0f)
-    );
-    glUniformMatrix4fv(glGetUniformLocation(shader, "viewTransform"),
-                       1, GL_FALSE, glm::value_ptr(viewTransform));
+
+    // Old Cam View Transform (before implementing mouse look)
+    // viewTransform = glm::lookAt(
+    //     glm::vec3(x, y, z),
+    //     glm::vec3(x, y, z) + lookDirection,
+    //     glm::vec3(0.0f, 1.0f, 0.0f)
+    // );
+    // glUniformMatrix4fv(glGetUniformLocation(shader, "viewTransform"),
+    //                    1, GL_FALSE, glm::value_ptr(viewTransform));
 
     // Draw coin at its animated position
     glm::vec3 nextPointCoin = getNextWaypoint(coinPathSegment);
@@ -536,6 +512,54 @@ void render()
     }
 }
 
+void processInput(GLFWwindow *window)
+{
+    float currentFrame = glfwGetTime();
+    deltaTime = currentFrame - lastFrame;
+    lastFrame = currentFrame;  
+    const float cameraSpeed = 15.0f * deltaTime; // adjust accordingly
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+        cameraPos += cameraSpeed * cameraFront;
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+        cameraPos -= cameraSpeed * cameraFront;
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+        cameraPos -= glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+        cameraPos += glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
+}
+
+void mouse_callback(GLFWwindow* window, double xpos, double ypos)
+{
+    if (firstMouse)
+    {
+        lastX = xpos;
+        lastY = ypos;
+        firstMouse = false;
+    }
+    
+    float xoffset = xpos - lastX;
+    float yoffset = lastY - ypos; // reversed since y-coordinates range from bottom to top
+    lastX = xpos;
+    lastY = ypos;
+
+    const float sensitivity = 0.1f;
+    xoffset *= sensitivity;
+    yoffset *= sensitivity;
+
+    yaw   += xoffset;
+    pitch += yoffset;
+
+    if(pitch > 89.0f)
+        pitch = 89.0f;
+    if(pitch < -89.0f)
+        pitch = -89.0f;
+
+    glm::vec3 direction;
+    direction.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
+    direction.y = sin(glm::radians(pitch));
+    direction.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
+    cameraFront = glm::normalize(direction);
+};
 /*****************************************************************************/
 
 // handler called by GLFW when there is a keyboard event
@@ -581,6 +605,8 @@ int main(int argc, char** argv)
 
     // set up callback functions to handle window system events
     glfwSetKeyCallback(pWindow, handleKeys);
+    glfwSetCursorPosCallback(pWindow, mouse_callback);
+    glfwSetInputMode(pWindow, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     glfwSetFramebufferSizeCallback(pWindow, handleResize);
 
     // don't miss any momentary keypresses
@@ -595,6 +621,8 @@ int main(int argc, char** argv)
         // do rendering in a loop until the user closes the window
         while (! glfwWindowShouldClose(pWindow))
         {
+            // Process inputs for player movement
+            processInput(pWindow);
             // render our next frame
             // (by default, GLFW uses double-buffering with a front and back buffer;
             // all drawing goes to the back buffer, so the frame does not get shown yet)
