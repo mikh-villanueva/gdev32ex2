@@ -1,3 +1,20 @@
+/******************************************************************************
+*   Controls: 
+*     W - up
+*     A - left
+*     S - down
+*     D - right
+*     mouse - look around
+*     Arrow Keys - move spotlight
+*     [ - decrease light level
+*     ] - increase light level
+*     - - decrease point light height
+*     + - increase point light height
+*     Z - decrease specularity
+*     X - increase specularity
+*     F - toggle specular light
+******************************************************************************/
+
 #include <iostream>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -14,6 +31,8 @@ GLuint vao;
 GLuint vbo;
 GLuint shader;
 GLuint textureID;
+GLuint specMap;
+bool useSpecMap = true;
 
 glm::vec3 cameraPos   = glm::vec3(0.0f, 0.0f,  3.0f);
 glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
@@ -126,8 +145,11 @@ bool setup()
     shader = gdevLoadShader("ex2.vs", "ex2.fs");
     if (!shader) return false;
 
-    textureID = gdevLoadTexture("brickwalltexture.jpg", GL_REPEAT, true, true);
+    textureID = gdevLoadTexture("wood_texture.jpg", GL_REPEAT, true, true);
     if (!textureID) return false;
+
+    specMap = gdevLoadTexture("woodtex_specmap.jpg", GL_REPEAT, true, true);
+    if (!specMap) return false;
 
     glEnable(GL_DEPTH_TEST);
     return true;
@@ -144,12 +166,12 @@ void render()
     spotPosition = glm::vec3(spotX, spotPosition.y, spotZ);
 
     // Light uniforms
-    glUniform3fv(glGetUniformLocation(shader, "lightPosition"), 1, &lightPosition[0]);
-    glUniform3fv(glGetUniformLocation(shader, "lightColor"), 1, &lightColor[0]);
+    glUniform3fv(glGetUniformLocation(shader, "lightPosition"), 1, glm::value_ptr(lightPosition));
+    glUniform3fv(glGetUniformLocation(shader, "lightColor"), 1, glm::value_ptr(lightColor));
     glUniform1f(glGetUniformLocation(shader, "specColor"), specularity);
 
-    glUniform3fv(glGetUniformLocation(shader, "spotPosition"), 1, &spotPosition[0]);
-    glUniform3fv(glGetUniformLocation(shader, "spotDirection"), 1, &spotDirection[0]);
+    glUniform3fv(glGetUniformLocation(shader, "spotPosition"), 1, glm::value_ptr(spotPosition));
+    glUniform3fv(glGetUniformLocation(shader, "spotDirection"), 1, glm::value_ptr(spotDirection));
     glUniform1f(glGetUniformLocation(shader, "spotCutoff"), glm::cos(glm::radians(15.0f)));
     glUniform3f(glGetUniformLocation(shader, "spotColor"), 1.0f, 1.0f, 1.0f);
 
@@ -172,6 +194,9 @@ void render()
     glUniformMatrix4fv(glGetUniformLocation(shader, "viewTransform"),
                        1, GL_FALSE, glm::value_ptr(view));
 
+    // Determine use of specular map before drawing the model                   
+    glUniform1i(glGetUniformLocation(shader, "useSpecMap"), useSpecMap);
+
     // Model
     glm::mat4 model = glm::mat4(1.0f);
     float scale = 0.1f;
@@ -186,6 +211,12 @@ void render()
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, textureID);
+    glUniform1i(glGetUniformLocation(shader, "shaderTexture"), 0);
+    
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, specMap);
+    glUniform1i(glGetUniformLocation(shader, "specularMap"), 1);
+
     glBindVertexArray(vao);
 
     glDrawArrays(GL_TRIANGLES, 0, sizeof(cube)/11*sizeof(float)); // 6 faces × 6 vertices
@@ -265,6 +296,12 @@ void processInput(GLFWwindow *window)
         spotZ += 0.01f;
     if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
         spotZ -= 0.01f;
+    if (glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS)
+        specularity -= 0.05f;
+    if (glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS)
+        specularity += 0.05f;
+    if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS)
+        if (useSpecMap) useSpecMap = false; else useSpecMap = true;
 }
 
 void mouse_callback(GLFWwindow* window, double xpos, double ypos)
