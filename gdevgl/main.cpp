@@ -333,6 +333,29 @@ bool setup()
 // called by the main function to do rendering per frame
 void render()
 {
+    // --- Spotlight direction controls (arrow keys) ---
+    static float spotYaw = 0.0f;
+    static float spotPitch = 0.0f;
+    const float spotTurnSpeed = 1.0f; // degrees per frame
+    // Arrow keys adjust spotlight direction
+    if (glfwGetKey(pWindow, GLFW_KEY_LEFT) == GLFW_PRESS)
+        spotYaw -= spotTurnSpeed;
+    if (glfwGetKey(pWindow, GLFW_KEY_RIGHT) == GLFW_PRESS)
+        spotYaw += spotTurnSpeed;
+    if (glfwGetKey(pWindow, GLFW_KEY_UP) == GLFW_PRESS)
+        spotPitch += spotTurnSpeed;
+    if (glfwGetKey(pWindow, GLFW_KEY_DOWN) == GLFW_PRESS)
+        spotPitch -= spotTurnSpeed;
+    // Clamp pitch to avoid flipping
+    if (spotPitch > 89.0f) spotPitch = 89.0f;
+    if (spotPitch < -89.0f) spotPitch = -89.0f;
+    // Convert yaw/pitch to direction vector
+    float yawRad = glm::radians(spotYaw);
+    float pitchRad = glm::radians(spotPitch);
+    spotDirection.x = cos(pitchRad) * sin(yawRad);
+    spotDirection.y = sin(pitchRad);
+    spotDirection.z = -cos(pitchRad) * cos(yawRad);
+    
     // find the elapsed time since the last frame
     double currentTime = glfwGetTime();
     double elapsedTime = (currentTime - previousTime);
