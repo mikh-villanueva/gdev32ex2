@@ -1,0 +1,34 @@
+#!/bin/bash
+###############################################################################
+## This simple shell script helps you to quickly compile and run a single-file
+## OpenGL/GLFW program on macOS or Ubuntu.
+##
+## Happy hacking! - eric
+###############################################################################
+
+## display a message if no filename was given
+if [ -z "$1" ]; then
+    echo "Usage:    ./test {filename of cpp program}"
+    echo "Example:  ./test demo0.cpp"
+    exit
+fi
+
+## append the extension to the filename if it was omitted
+TESTFILE="$1"
+if [ -f $1.cpp ]; then TESTFILE="$1.cpp"; fi
+
+## construct the compile command depending on the platform
+if [ `command -v clang++` ]; then
+    TESTCMD="clang++ $TESTFILE src/glad.cpp -std=c++17 -Wall -lglfw3 -framework Cocoa -framework IOKit -Iinclude -Llib-universal -o ${1%.*}.out"
+elif [ `command -v g++` ]; then
+    TESTCMD="g++ $TESTFILE src/glad.cpp -std=c++17 -Wall -lglfw -Iinclude -o ${1%.*}.out"
+else
+    echo "No suitable compiler found. Make sure you have installed the correct compiler for your system."
+    exit
+fi
+
+## show the user what the compile command will look like
+echo $TESTCMD
+
+## actually compile the program && run it if compilation succeeds
+$TESTCMD && ./${1%.*}.out
