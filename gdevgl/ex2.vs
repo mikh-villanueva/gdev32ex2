@@ -24,6 +24,12 @@ out vec3 worldSpacePos;
 out vec3 worldSpaceNorm;
 out vec3 objColor;
 
+///////////////////////////////////////////////////////////////////////////////
+// added for shadow mapping
+uniform mat4 lightTransform;
+out vec4 shaderLightSpacePosition;
+///////////////////////////////////////////////////////////////////////////////
+
 void main()
 {
     worldSpacePos = (modelTransform * vec4(vertexPosition, 1.0f)).xyz;
@@ -33,4 +39,9 @@ void main()
     gl_Position = projectionTransform * viewTransform * modelTransform * vec4(vertexPosition, 1.0f);
     shaderColor = vertexColor;
     shaderTexCoord = vertexTexCoord;
+
+    ///////////////////////////////////////////////////////////////////////////
+    // also compute this fragment position from the light's point of view
+    shaderLightSpacePosition = lightTransform * modelTransform * vec4(vertexPosition, 1.0f);
+    ///////////////////////////////////////////////////////////////////////////
 }

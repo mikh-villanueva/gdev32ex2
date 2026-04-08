@@ -340,71 +340,18 @@ glm::mat4 renderShadowMap()
     glUniformMatrix4fv(glGetUniformLocation(shadowMapShader, "lightTransform"),
                        1, GL_FALSE, glm::value_ptr(lightTransform));
 
-
-    //=========Pathing Animations==========//
-    // find the elapsed time since the last frame
-    double currentTime = glfwGetTime();
-    double elapsedTime = (currentTime - previousTime);
-    float camSpeed = 5.0f; // units per second
-    float moveSpeed = elapsedTime * camSpeed;
-    float turnSpeed = elapsedTime * (camSpeed/2);
-    previousTime = currentTime;
-
-    // Update animation - move coin along the path
-    coinPathTime += elapsedTime / coinPathDuration;
-    if (coinPathTime >= 1.0f) {
-        coinPathTime -= 1.0f;
-        coinPathSegment = (coinPathSegment + 1) % 3;  // cycle through segments
-    }
-    coinPos = getCoinPositionOnPath(coinPathTime, coinPathSegment);
-
-    // Update animation - move chest along the path independently
-    chestPathTime += elapsedTime / chestPathDuration;
-    if (chestPathTime >= 1.0f) {
-        chestPathTime -= 1.0f;
-        chestPathSegment = (chestPathSegment + 1) % 3;  // cycle through segments
-    }
-    chestPos = getChestPositionOnPath(chestPathTime, chestPathSegment);
-
-    // Draw coin at its animated position
-    glm::vec3 nextPointCoin = getNextWaypoint(coinPathSegment);
-    glm::mat4 coinRotation = getLookAtRotation(coinPos, nextPointCoin);
-    float coinBob = sin(currentTime * 3.0f) * 1.50f; // uses vertical bobbing to emulate floating movement
-    glm::mat4 modelTransform = glm::translate(glm::mat4(1.0f), coinPos + glm::vec3(0.0f, coinBob, 0.0f));
-    modelTransform = modelTransform * coinRotation;
-    glUniformMatrix4fv(glGetUniformLocation(shader, "modelTransform"),
+    // ... set up the model matrix... (just identity for this demo)
+    glm::mat4 modelTransform = glm::mat4(1.0f);
+    glUniformMatrix4fv(glGetUniformLocation(shadowMapShader, "modelTransform"),
                        1, GL_FALSE, glm::value_ptr(modelTransform));
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, texture[0]);
-    glBindVertexArray(vao[0]);
-    glDrawArrays(GL_TRIANGLES, 0, vertices[0].size() / 11);
 
-    // Draw chest at its animated position
-    glm::vec3 nextPointChest = getNextWaypoint(chestPathSegment);
-    glm::mat4 chestRotation = getLookAtRotation(chestPos, nextPointChest);
-    chestRotation = chestRotation * glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-    float chestBreath = 1.0f + sin(currentTime * 4.0f) * 0.1f; // uses scaling to make the chest look like it's bounding after the coin
-    modelTransform = glm::translate(glm::mat4(1.0f), chestPos);
-    modelTransform = modelTransform * chestRotation;
-    modelTransform = modelTransform * glm::scale(glm::mat4(1.0f), glm::vec3(chestBreath, chestBreath, chestBreath));
-    glUniformMatrix4fv(glGetUniformLocation(shader, "modelTransform"),
-                       1, GL_FALSE, glm::value_ptr(modelTransform));
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, texture[1]);
-    glBindVertexArray(vao[1]);
-    glDrawArrays(GL_TRIANGLES, 0, vertices[1].size() / 11);
-
-    // Draw the 6 cube faces (stationary, identity transform)
-    modelTransform = glm::mat4(1.0f);
-    glUniformMatrix4fv(glGetUniformLocation(shader, "modelTransform"),
-                       1, GL_FALSE, glm::value_ptr(modelTransform));
-    for (int i = 2; i < NUM_MODELS; i++) {
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, texture[i]);
+    // ... then draw our triangles
+    for (int i = 0; i < NUM_MODELS; i++) {
         glBindVertexArray(vao[i]);
-        glDrawArrays(GL_TRIANGLES, 0, vertices[i].size() / 11);
     }
     
+    glDrawArrays(GL_TRIANGLES, 0, sizeof(vertices) / (8 * sizeof(float)));
+
     // set the framebuffer back to the default onscreen buffer
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
@@ -531,7 +478,10 @@ void render()
     if (glfwGetKey(pWindow, GLFW_KEY_DOWN) == GLFW_PRESS)
         spotPitch -= spotTurnSpeed;
 
-    
+    ///////////////////////////////////////////////////////////////////////////
+    // draw the shadow map
+    glm::mat4 lightTransform = renderShadowMap();
+    ///////////////////////////////////////////////////////////////////////////
 
     // Clamp pitch to avoid flipping
     if (spotPitch > 89.0f) spotPitch = 89.0f;
@@ -626,11 +576,6 @@ void render()
     if (cameraPos.z > cameraBoundZ) cameraPos.z = cameraBoundZ;
     if (cameraPos.z < -cameraBoundZ) cameraPos.z = -cameraBoundZ;
 
-    ///////////////////////////////////////////////////////////////////////////
-    // draw the shadow map
-    glm::mat4 lightTransform = renderShadowMap();
-    ///////////////////////////////////////////////////////////////////////////
-
     // Camera turning is handled by mouse_callback; arrow keys are not used for camera
 
     glClearColor(0.0f, 0.3f, 0.3f, 1.0f);
@@ -679,16 +624,14 @@ void render()
         -cos(yaw) * cos(pitch)
     );
 
-    ///////////////////////////////////////////////////////////////////////////
-    // ... set up the light transformation (for looking up the shadow map)...
-    glUniformMatrix4fv(glGetUniformLocation(shader, "lightTransform"),
-                       1, GL_FALSE, glm::value_ptr(lightTransform));
-
-    // ... set the active texture...
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, shadowMapTexture);
-    glUniform1i(glGetUniformLocation(shader, "shadowMap"),  1);
-    ///////////////////////////////////////////////////////////////////////////
+    // Old Cam View Transform (before implementing mouse look)
+    // viewTransform = glm::lookAt(
+    //     glm::vec3(x, y, z),
+    //     glm::vec3(x, y, z) + lookDirection,
+    //     glm::vec3(0.0f, 1.0f, 0.0f)
+    // );
+    // glUniformMatrix4fv(glGetUniformLocation(shader, "viewTransform"),
+    //                    1, GL_FALSE, glm::value_ptr(viewTransform));
 
     // Draw coin at its animated position
     glm::vec3 nextPointCoin = getNextWaypoint(coinPathSegment);
@@ -724,10 +667,27 @@ void render()
                        1, GL_FALSE, glm::value_ptr(modelTransform));
     for (int i = 2; i < NUM_MODELS; i++) {
         glActiveTexture(GL_TEXTURE0);
+        // glBindTexture(GL_TEXTURE_2D, texture[i]);
+
+        ///////////////////////////////////////////////////////////////////////////
+        // ... set up the light transformation (for looking up the shadow map)...
+        glUniformMatrix4fv(glGetUniformLocation(shader, "lightTransform"),
+                        1, GL_FALSE, glm::value_ptr(lightTransform));
+
+        // ... set the active texture...
+        glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, texture[i]);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, shadowMapTexture);
+        glUniform1i(glGetUniformLocation(shader, "diffuseMap"), 0);
+        glUniform1i(glGetUniformLocation(shader, "shadowMap"),  1);
+        ///////////////////////////////////////////////////////////////////////////
+
         glBindVertexArray(vao[i]);
         glDrawArrays(GL_TRIANGLES, 0, vertices[i].size() / 11);
     }
+
+    
 }
 
 void processInput(GLFWwindow *window)
