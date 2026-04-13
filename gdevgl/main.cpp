@@ -33,13 +33,13 @@ glm::vec3 spotDirection(0.0f, -1.0f, 0.0f);
 float spotX = 0.0f;
 float spotZ = 0.0f;
 
-constexpr float SPOTLIGHT_INNER_ANGLE_DEGREES = 35.0f;
-constexpr float SPOTLIGHT_OUTER_ANGLE_DEGREES = 45.0f;
-constexpr float SHADOW_NEAR_PLANE = 0.1f;
-constexpr float SHADOW_FAR_PLANE = 100.0f;
-constexpr int SHADOW_SOFTNESS_LEVELS = 5;
-const int SHADOW_SAMPLES_PER_AXIS_BY_LEVEL[SHADOW_SOFTNESS_LEVELS] = {1, 3, 5, 7, 9};
-const float SHADOW_FILTER_RADIUS_BY_LEVEL[SHADOW_SOFTNESS_LEVELS] = {0.0f, 1.0f, 1.75f, 2.5f, 3.25f};
+constexpr float spotInnerAngleDegrees = 35.0f;
+constexpr float spotOuterAngleDegrees = 45.0f;
+constexpr float shadowNearPlane = 0.5f;
+constexpr float shadowFarPlane = 45.0f;
+constexpr int shadowSoftnessLevels = 5;
+const int shadowSamplesPerAxisByLevel[shadowSoftnessLevels] = {1, 3, 5, 7, 9};
+const float shadowFilterRadiusByLevel[shadowSoftnessLevels] = {0.0f, 1.0f, 1.75f, 2.5f, 3.25f};
 
 bool shadowsEnabled = true;
 int shadowSoftnessLevel = 1;
@@ -305,10 +305,10 @@ glm::mat4 getLookAtRotation(glm::vec3 from, glm::vec3 to)
     glm::mat4 getSpotlightTransform()
     {
         glm::mat4 lightProjection = glm::perspective(
-            glm::radians(SPOTLIGHT_OUTER_ANGLE_DEGREES * 2.0f),
+            glm::radians(spotOuterAngleDegrees * 2.0f),
             1.0f,
-            SHADOW_NEAR_PLANE,
-            SHADOW_FAR_PLANE);
+            shadowNearPlane,
+            shadowFarPlane);
 
         glm::mat4 lightView = glm::lookAt(
             spotPosition,
@@ -630,16 +630,16 @@ void render()
 
     glUniform3fv(glGetUniformLocation(shader, "spotPosition"), 1, &spotPosition[0]);
     glUniform3fv(glGetUniformLocation(shader, "spotDirection"), 1, &spotDirection[0]);
-    glUniform1f(glGetUniformLocation(shader, "spotCutoff"), glm::cos(glm::radians(SPOTLIGHT_INNER_ANGLE_DEGREES)));
-    glUniform1f(glGetUniformLocation(shader, "spotOuterCutoff"), glm::cos(glm::radians(SPOTLIGHT_OUTER_ANGLE_DEGREES)));
+    glUniform1f(glGetUniformLocation(shader, "spotCutoff"), glm::cos(glm::radians(spotInnerAngleDegrees)));
+    glUniform1f(glGetUniformLocation(shader, "spotOuterCutoff"), glm::cos(glm::radians(spotOuterAngleDegrees)));
     glUniform3f(glGetUniformLocation(shader, "spotColor"), 1.0f, 1.0f, 1.0f);
 
     glUniform3fv(glGetUniformLocation(shader, "cameraPos"), 1, &cameraPos[0]);
     glUniform1i(glGetUniformLocation(shader, "shaderTexture"), 0);
     glUniform1i(glGetUniformLocation(shader, "shadowMap"), 1);
     glUniform1i(glGetUniformLocation(shader, "shadowsEnabled"), shadowsEnabled ? 1 : 0);
-    glUniform1i(glGetUniformLocation(shader, "shadowSamplesPerAxis"), SHADOW_SAMPLES_PER_AXIS_BY_LEVEL[shadowSoftnessLevel]);
-    glUniform1f(glGetUniformLocation(shader, "shadowFilterRadius"), SHADOW_FILTER_RADIUS_BY_LEVEL[shadowSoftnessLevel]);
+    glUniform1i(glGetUniformLocation(shader, "shadowSamplesPerAxis"), shadowSamplesPerAxisByLevel[shadowSoftnessLevel]);
+    glUniform1f(glGetUniformLocation(shader, "shadowFilterRadius"), shadowFilterRadiusByLevel[shadowSoftnessLevel]);
 
     // ... set up the projection matrix...
     int width, height;
@@ -741,7 +741,7 @@ void handleKeys(GLFWwindow* pWindow, int key, int scancode, int action, int mode
             shadowsEnabled = !shadowsEnabled;
         else if (key == GLFW_KEY_N && shadowSoftnessLevel > 0)
             shadowSoftnessLevel--;
-        else if (key == GLFW_KEY_M && shadowSoftnessLevel < SHADOW_SOFTNESS_LEVELS - 1)
+        else if (key == GLFW_KEY_M && shadowSoftnessLevel < shadowSoftnessLevels - 1)
             shadowSoftnessLevel++;
     }
 }

@@ -59,7 +59,8 @@ float getShadowAmount(vec3 norm)
 
     vec2 texelSize = 1.0f / vec2(textureSize(shadowMap, 0));
     vec3 shadowLightDir = normalize(spotPosition - worldSpacePos);
-    float bias = max(0.00075f, 0.003f * (1.0f - max(dot(norm, shadowLightDir), 0.0f)));
+    float normalAlignment = max(dot(norm, shadowLightDir), 0.0f);
+    float bias = max(0.00012f, 0.0012f * (1.0f - normalAlignment));
 
     int halfWindow = shadowSamplesPerAxis / 2;
     float occlusion = 0.0f;
