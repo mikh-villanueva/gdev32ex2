@@ -11,7 +11,9 @@
  *****************************************************************************/
 
 #include <cmath>
+#include <fstream>
 #include <iostream>
+#include <vector>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <glm/gtc/type_ptr.hpp>
@@ -116,12 +118,20 @@ float cube_bottom[] =
 
 const int NUM_MODELS = 8;
 std::vector<float> vertices[NUM_MODELS];
+int vertexStrides[NUM_MODELS];
 
 // define OpenGL object IDs to represent the vertex array, shader program, and texture in the GPU
 GLuint vao[NUM_MODELS];         // vertex array object (stores the render state for our vertex array)
 GLuint vbo[NUM_MODELS];         // vertex buffer object (reserves GPU memory for our vertex array)
 GLuint shader;      // combined vertex and fragment shader
 GLuint texture[NUM_MODELS];     // texture object
+GLuint specularMapTexture[NUM_MODELS] = {};
+GLuint normalMapTexture[NUM_MODELS] = {};
+
+bool useCoinSpecular = true;
+bool useChestSpecular = true;
+bool useCubeSpecular = true;
+bool useNormalMapping = true;
 
 glm::vec3 cameraPos   = glm::vec3(0.0f, 0.0f,  3.0f);
 glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
@@ -187,6 +197,255 @@ void load_model(const char* filename, std::vector<float>& vertices)
         vertices.push_back(norm[1]);
         vertices.push_back(norm[2]);
     }
+}
+
+void fixCoinSurfaceNormals(std::vector<float>& verts)
+{
+    const int stride = 11;
+    const float surfaceThreshold = 0.001f;
+    const float flipThreshold = 0.2f;
+
+    if (verts.size() % (stride * 3) != 0)
+        return;
+
+    for (std::size_t base = 0; base < verts.size(); base += stride * 3)
+    {
+        float averageZ = 0.0f;
+        float averageNormalZ = 0.0f;
+        for (int vertex = 0; vertex < 3; ++vertex)
+        {
+            std::size_t offset = base + static_cast<std::size_t>(vertex) * stride;
+            averageZ += verts[offset + 2];
+            averageNormalZ += verts[offset + 5];
+        }
+
+        averageZ /= 3.0f;
+        averageNormalZ /= 3.0f;
+
+        bool flipFrontFacingNormals = averageZ > surfaceThreshold && averageNormalZ < -flipThreshold;
+        bool flipBackFacingNormals = averageZ < -surfaceThreshold && averageNormalZ > flipThreshold;
+        if (!flipFrontFacingNormals && !flipBackFacingNormals)
+            continue;
+
+        for (int vertex = 0; vertex < 3; ++vertex)
+        {
+            std::size_t offset = base + static_cast<std::size_t>(vertex) * stride;
+            verts[offset + 3] = -verts[offset + 3];
+            verts[offset + 4] = -verts[offset + 4];
+            verts[offset + 5] = -verts[offset + 5];
+        }
+    }
+}
+
+bool fileExists(const char* filename)
+{
+    std::ifstream file(filename);
+    return file.good();
+}
+
+GLuint loadOptionalTexture(const char* filename)
+{
+    if (!fileExists(filename))
+        return 0;
+
+    return gdevLoadTexture(filename, GL_REPEAT, true, true);
+}
+
+float clampValue(float value, float minimum, float maximum)
+{
+    if (value < minimum)
+        return minimum;
+    if (value > maximum)
+        return maximum;
+    return value;
+}
+
+float smoothStepValue(float edge0, float edge1, float value)
+{
+    float t = clampValue((value - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+float wrap01(float value)
+{
+    return value - std::floor(value);
+}
+
+GLuint createTextureFromRgbData(const std::vector<unsigned char>& pixels, int width, int height)
+{
+    GLuint generatedTexture = 0;
+    glGenTextures(1, &generatedTexture);
+    glBindTexture(GL_TEXTURE_2D, generatedTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+    glGenerateMipmap(GL_TEXTURE_2D);
+    return generatedTexture;
+}
+
+GLuint createGrayscaleTexture(int size, unsigned char value)
+{
+    std::vector<unsigned char> pixels(size * size * 3, value);
+    return createTextureFromRgbData(pixels, size, size);
+}
+
+float sampleWoodHeight(float u, float v)
+{
+    float grain = 0.5f + 0.5f * std::sin((u * 48.0f) + 4.0f * std::sin(v * 14.0f));
+    float rings = 0.5f + 0.5f * std::sin((u + 0.15f * std::sin(v * 6.0f)) * 20.0f);
+    return 0.65f * grain + 0.35f * rings;
+}
+
+float sampleBrickHeight(float u, float v)
+{
+    float scaledU = u * 4.0f;
+    float scaledV = v * 4.0f;
+    float row = std::floor(scaledV);
+    float rowOffset = std::fmod(row, 2.0f) >= 1.0f ? 0.5f : 0.0f;
+
+    float localU = wrap01(scaledU + rowOffset);
+    float localV = wrap01(scaledV);
+    float edgeU = std::min(localU, 1.0f - localU);
+    float edgeV = std::min(localV, 1.0f - localV);
+
+    float brickMask = smoothStepValue(0.05f, 0.12f, edgeU)
+                    * smoothStepValue(0.05f, 0.12f, edgeV);
+    float brickNoise = 0.5f + 0.5f * std::sin(u * 26.0f + v * 19.0f);
+    return 0.12f + brickMask * (0.78f + 0.10f * brickNoise);
+}
+
+float sampleWoodSpecular(float u, float v)
+{
+    return 0.18f + 0.35f * sampleWoodHeight(u, v);
+}
+
+float sampleBrickSpecular(float u, float v)
+{
+    return 0.10f + 0.28f * sampleBrickHeight(u, v);
+}
+
+GLuint createNormalMapTexture(int size, float (*heightSampler)(float, float), float strength)
+{
+    std::vector<unsigned char> pixels(size * size * 3);
+    float delta = 1.0f / static_cast<float>(size);
+
+    for (int y = 0; y < size; ++y)
+    {
+        for (int x = 0; x < size; ++x)
+        {
+            float u = (static_cast<float>(x) + 0.5f) / static_cast<float>(size);
+            float v = (static_cast<float>(y) + 0.5f) / static_cast<float>(size);
+
+            float hL = heightSampler(wrap01(u - delta), v);
+            float hR = heightSampler(wrap01(u + delta), v);
+            float hD = heightSampler(u, wrap01(v - delta));
+            float hU = heightSampler(u, wrap01(v + delta));
+
+            glm::vec3 normal = glm::normalize(glm::vec3(
+                (hL - hR) * strength,
+                (hD - hU) * strength,
+                1.0f));
+
+            std::size_t index = static_cast<std::size_t>(y * size + x) * 3;
+            pixels[index + 0] = static_cast<unsigned char>(clampValue(normal.x * 0.5f + 0.5f, 0.0f, 1.0f) * 255.0f);
+            pixels[index + 1] = static_cast<unsigned char>(clampValue(normal.y * 0.5f + 0.5f, 0.0f, 1.0f) * 255.0f);
+            pixels[index + 2] = static_cast<unsigned char>(clampValue(normal.z * 0.5f + 0.5f, 0.0f, 1.0f) * 255.0f);
+        }
+    }
+
+    return createTextureFromRgbData(pixels, size, size);
+}
+
+GLuint createSpecularMapTexture(int size, float (*specularSampler)(float, float))
+{
+    std::vector<unsigned char> pixels(size * size * 3);
+
+    for (int y = 0; y < size; ++y)
+    {
+        for (int x = 0; x < size; ++x)
+        {
+            float u = (static_cast<float>(x) + 0.5f) / static_cast<float>(size);
+            float v = (static_cast<float>(y) + 0.5f) / static_cast<float>(size);
+            unsigned char intensity = static_cast<unsigned char>(clampValue(specularSampler(u, v), 0.0f, 1.0f) * 255.0f);
+
+            std::size_t index = static_cast<std::size_t>(y * size + x) * 3;
+            pixels[index + 0] = intensity;
+            pixels[index + 1] = intensity;
+            pixels[index + 2] = intensity;
+        }
+    }
+
+    return createTextureFromRgbData(pixels, size, size);
+}
+
+void addTangentsToVertices(std::vector<float>& verts)
+{
+    const int oldStride = 11;
+    if (verts.size() % oldStride != 0)
+        return;
+
+    std::size_t vertexCount = verts.size() / oldStride;
+    std::vector<glm::vec3> tangents(vertexCount, glm::vec3(0.0f));
+
+    for (std::size_t i = 0; i + 2 < vertexCount; i += 3)
+    {
+        std::size_t i0 = i * oldStride;
+        std::size_t i1 = (i + 1) * oldStride;
+        std::size_t i2 = (i + 2) * oldStride;
+
+        glm::vec3 p0(verts[i0 + 0], verts[i0 + 1], verts[i0 + 2]);
+        glm::vec3 p1(verts[i1 + 0], verts[i1 + 1], verts[i1 + 2]);
+        glm::vec3 p2(verts[i2 + 0], verts[i2 + 1], verts[i2 + 2]);
+
+        glm::vec2 uv0(verts[i0 + 6], verts[i0 + 7]);
+        glm::vec2 uv1(verts[i1 + 6], verts[i1 + 7]);
+        glm::vec2 uv2(verts[i2 + 6], verts[i2 + 7]);
+
+        glm::vec3 edge1 = p1 - p0;
+        glm::vec3 edge2 = p2 - p0;
+        glm::vec2 dUV1 = uv1 - uv0;
+        glm::vec2 dUV2 = uv2 - uv0;
+
+        float determinant = dUV1.x * dUV2.y - dUV2.x * dUV1.y;
+        if (std::abs(determinant) < 1e-6f)
+            continue;
+
+        float factor = 1.0f / determinant;
+        glm::vec3 tangent = factor * (dUV2.y * edge1 - dUV1.y * edge2);
+
+        tangents[i + 0] += tangent;
+        tangents[i + 1] += tangent;
+        tangents[i + 2] += tangent;
+    }
+
+    for (std::size_t vertex = 0; vertex < vertexCount; ++vertex)
+    {
+        glm::vec3 tangent = tangents[vertex];
+        if (glm::dot(tangent, tangent) > 1e-6f)
+            tangents[vertex] = glm::normalize(tangent);
+        else
+            tangents[vertex] = glm::vec3(1.0f, 0.0f, 0.0f);
+    }
+
+    const int newStride = 14;
+    std::vector<float> withTangents;
+    withTangents.reserve(vertexCount * newStride);
+
+    for (std::size_t vertex = 0; vertex < vertexCount; ++vertex)
+    {
+        std::size_t base = vertex * oldStride;
+        for (int element = 0; element < oldStride; ++element)
+            withTangents.push_back(verts[base + element]);
+
+        glm::vec3 tangent = tangents[vertex];
+        withTangents.push_back(tangent.x);
+        withTangents.push_back(tangent.y);
+        withTangents.push_back(tangent.z);
+    }
+
+    verts.swap(withTangents);
 }
 
 // Helper function to get position at a given time along the path
@@ -340,12 +599,52 @@ glm::mat4 getLookAtRotation(glm::vec3 from, glm::vec3 to)
 
         if (bindTexture)
         {
+            bool useSpecularForModel = false;
+            bool useNormalForModel = false;
+            float specularStrength = specularity;
+
+            if (modelIndex == 0)
+            {
+                useSpecularForModel = useCoinSpecular && specularMapTexture[0] != 0;
+                specularStrength = useSpecularForModel ? 5.0f : specularity;
+            }
+            else if (modelIndex == 1)
+            {
+                useSpecularForModel = useChestSpecular && specularMapTexture[1] != 0;
+                useNormalForModel = useNormalMapping && normalMapTexture[1] != 0;
+                specularStrength = useSpecularForModel ? 3.0f : specularity;
+            }
+            else
+            {
+                useSpecularForModel = useCubeSpecular && specularMapTexture[modelIndex] != 0;
+                useNormalForModel = useNormalMapping && normalMapTexture[modelIndex] != 0;
+                specularStrength = useSpecularForModel ? 2.0f : specularity;
+            }
+
+            GLint specColorLocation = glGetUniformLocation(activeShader, "specColor");
+            if (specColorLocation != -1)
+                glUniform1f(specColorLocation, specularStrength);
+
+            GLint useSpecularTextureLocation = glGetUniformLocation(activeShader, "useSpecularTexture");
+            if (useSpecularTextureLocation != -1)
+                glUniform1i(useSpecularTextureLocation, useSpecularForModel ? 1 : 0);
+
+            GLint useNormalMapLocation = glGetUniformLocation(activeShader, "useNormalMap");
+            if (useNormalMapLocation != -1)
+                glUniform1i(useNormalMapLocation, useNormalForModel ? 1 : 0);
+
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, texture[modelIndex]);
+
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, useSpecularForModel ? specularMapTexture[modelIndex] : 0);
+
+            glActiveTexture(GL_TEXTURE2);
+            glBindTexture(GL_TEXTURE_2D, useNormalForModel ? normalMapTexture[modelIndex] : 0);
         }
 
         glBindVertexArray(vao[modelIndex]);
-        glDrawArrays(GL_TRIANGLES, 0, vertices[modelIndex].size() / 11);
+        glDrawArrays(GL_TRIANGLES, 0, vertices[modelIndex].size() / vertexStrides[modelIndex]);
     }
 
     void drawScene(GLuint activeShader, double currentTime, bool bindTexture)
@@ -442,8 +741,12 @@ void renderShadowMap(const glm::mat4& lightTransform, double currentTime)
 // arrays, shader programs, etc.; returns true if successful, false otherwise
 bool setup()
 {
+    for (int i = 0; i < NUM_MODELS; ++i)
+        vertexStrides[i] = 11;
+
     // function to load object data from a file (implementation omitted for brevity)
     load_model("coinarray.txt", vertices[0]);
+    fixCoinSurfaceNormals(vertices[0]);
     load_model("chestarray.txt", vertices[1]);
     
     // Load cube face vertices from static arrays
@@ -453,6 +756,14 @@ bool setup()
     vertices[5].assign(cube_right, cube_right + sizeof(cube_right) / sizeof(cube_right[0]));
     vertices[6].assign(cube_top, cube_top + sizeof(cube_top) / sizeof(cube_top[0]));
     vertices[7].assign(cube_bottom, cube_bottom + sizeof(cube_bottom) / sizeof(cube_bottom[0]));
+
+    addTangentsToVertices(vertices[1]);
+    vertexStrides[1] = 14;
+    for (int i = 2; i < NUM_MODELS; ++i)
+    {
+        addTangentsToVertices(vertices[i]);
+        vertexStrides[i] = 14;
+    }
 
 
     // upload the model to the GPU (explanations omitted for brevity)
@@ -464,16 +775,24 @@ bool setup()
         glBindBuffer(GL_ARRAY_BUFFER, vbo[i]);
         glBufferData(GL_ARRAY_BUFFER, vertices[i].size() * sizeof(float), vertices[i].data(), GL_STATIC_DRAW);
 
+        int stride = vertexStrides[i];
+
         // on the VAO, register the current VBO with the following vertex attribute layout:
-        // - the stride length of the vertex array is 11 floats (11 * sizeof(float))
+        // - the stride length of the vertex array is 11 or 14 floats
         // - layout location 0 (position) is 3 floats and starts at the first float of the vertex array (offset 0)
         // - layout location 1 (color) is 3 floats and starts at the fourth float (offset 3 * sizeof(float))
         // - layout location 2 (texcoord) is 2 floats and starts at the seventh float (offset 6 * sizeof(float))
         // - layout location 3 (normal) is 3 floats and starts at the ninth float (offset 8 * sizeof(float))
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 11 * sizeof(float), (void*) 0);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 11 * sizeof(float), (void*) (3 * sizeof(float)));
-        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 11 * sizeof(float), (void*) (6 * sizeof(float)));
-        glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 11 * sizeof(float), (void*) (8 * sizeof(float)));
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride * sizeof(float), (void*) 0);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride * sizeof(float), (void*) (3 * sizeof(float)));
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride * sizeof(float), (void*) (6 * sizeof(float)));
+        glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, stride * sizeof(float), (void*) (8 * sizeof(float)));
+
+        if (stride == 14)
+        {
+            glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, stride * sizeof(float), (void*) (11 * sizeof(float)));
+            glEnableVertexAttribArray(4);
+        }
 
         // enable the layout locations so they can be used by the vertex shader
         glEnableVertexAttribArray(0);
@@ -498,11 +817,34 @@ bool setup()
     for (int i = 2; i < NUM_MODELS; i++) {
         texture[i] = brick_texture;
     } // https://www.freepik.com/free-photo/brick-wall-background-texture_34862131.htm#fromView=keyword&page=1&position=5&uuid=e7c70f0f-9578-48b7-9546-1bd42e57d650&query=Dungeon+wall+pattern
+
+    GLuint coinSpecularTexture = gdevLoadTexture("specular_goldcoin.jpg", GL_REPEAT, true, true);
+    GLuint chestSpecularTexture = gdevLoadTexture("specular_wood_texture.jpg", GL_REPEAT, true, true);
+    GLuint cubeSpecularTexture = gdevLoadTexture("specular_brickwalltexture.jpg", GL_REPEAT, true, true);
+
+    GLuint chestNormalTexture = gdevLoadTexture("normmap_wood_texture.png", GL_REPEAT, true, true);
+    GLuint cubeNormalTexture = gdevLoadTexture("normmap_brickwalltexture.png", GL_REPEAT, true, true);
+
+    specularMapTexture[0] = coinSpecularTexture;
+    specularMapTexture[1] = chestSpecularTexture;
+    normalMapTexture[0] = 0;
+    normalMapTexture[1] = chestNormalTexture;
+    for (int i = 2; i < NUM_MODELS; ++i)
+    {
+        specularMapTexture[i] = cubeSpecularTexture;
+        normalMapTexture[i] = cubeNormalTexture;
+    }
     
     for (GLuint t: texture) {
         if (! t)
             return false;
     }
+
+    if (!specularMapTexture[0] || !specularMapTexture[1] || !specularMapTexture[2])
+        return false;
+
+    if (!normalMapTexture[1] || !normalMapTexture[2])
+        return false;
     
 
     glEnable(GL_DEPTH_TEST);
@@ -636,7 +978,9 @@ void render()
 
     glUniform3fv(glGetUniformLocation(shader, "cameraPos"), 1, &cameraPos[0]);
     glUniform1i(glGetUniformLocation(shader, "shaderTexture"), 0);
-    glUniform1i(glGetUniformLocation(shader, "shadowMap"), 1);
+    glUniform1i(glGetUniformLocation(shader, "specularTexture"), 1);
+    glUniform1i(glGetUniformLocation(shader, "normalMap"), 2);
+    glUniform1i(glGetUniformLocation(shader, "shadowMap"), 3);
     glUniform1i(glGetUniformLocation(shader, "shadowsEnabled"), shadowsEnabled ? 1 : 0);
     glUniform1i(glGetUniformLocation(shader, "shadowSamplesPerAxis"), shadowSamplesPerAxisByLevel[shadowSoftnessLevel]);
     glUniform1f(glGetUniformLocation(shader, "shadowFilterRadius"), shadowFilterRadiusByLevel[shadowSoftnessLevel]);
@@ -668,7 +1012,7 @@ void render()
                        1, GL_FALSE, glm::value_ptr(lightTransform));
 
     // ... set the active texture...
-    glActiveTexture(GL_TEXTURE1);
+    glActiveTexture(GL_TEXTURE3);
     glBindTexture(GL_TEXTURE_2D, shadowMapTexture);
     ///////////////////////////////////////////////////////////////////////////
 

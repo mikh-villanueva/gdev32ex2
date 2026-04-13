@@ -8,22 +8,29 @@
 
 in vec3 worldSpacePos;
 in vec3 worldSpaceNorm;
+in vec3 worldTangent;
+in vec3 worldBitangent;
 in vec3 objColor;
 
 in vec3 shaderColor;
 in vec2 shaderTexCoord;
 uniform sampler2D shaderTexture;
+uniform sampler2D specularTexture;
+uniform sampler2D normalMap;
+uniform int useSpecularTexture;
+uniform int useNormalMap;
 out vec4 fragmentColor;
 
-uniform vec3 cameraPos; 
+uniform vec3 cameraPos;
 uniform vec3 lightPosition;
 uniform vec3 lightColor;
 uniform float specColor;
 
-float ambColor = 0.7;
+float ambColor = 0.2;
 float constant = 1.0f;
 float linear = 0.22f;
 float quadratic = 0.2f;
+float shininess = 64.0f;
 
 uniform vec3 spotPosition;
 uniform vec3 spotDirection;
@@ -40,6 +47,28 @@ uniform float shadowFilterRadius;
 float randomValue(vec2 seed)
 {
     return fract(sin(dot(seed, vec2(12.9898f, 78.233f))) * 43758.5453f);
+}
+
+vec3 getSurfaceNormal()
+{
+    vec3 norm = normalize(worldSpaceNorm);
+    if (useNormalMap == 0)
+        return norm;
+
+    vec3 tangent = normalize(worldTangent);
+    vec3 bitangent = normalize(worldBitangent);
+    mat3 tbn = mat3(tangent, bitangent, norm);
+    vec3 mapNormal = texture(normalMap, shaderTexCoord).rgb * 2.0f - 1.0f;
+    return normalize(tbn * mapNormal);
+}
+
+float getSpecularStrength()
+{
+    if (useSpecularTexture == 0)
+        return 0.0f;
+
+    vec3 specularSample = texture(specularTexture, shaderTexCoord).rgb;
+    return max(specularSample.r, max(specularSample.g, specularSample.b));
 }
 
 float getShadowAmount(vec3 norm)
@@ -97,30 +126,28 @@ void main()
 {
     vec4 texSample = texture(shaderTexture, shaderTexCoord);
     vec3 texColor = texSample.rgb;
-    vec3 norm = normalize(worldSpaceNorm);
+    vec3 norm = getSurfaceNormal();
     vec3 viewDir = normalize(cameraPos - worldSpacePos);
+    float specularStrength = getSpecularStrength();
 
     float lightWorldDistance = length(lightPosition - worldSpacePos);
     float attenuation = 1.0 / (constant + linear * lightWorldDistance + quadratic * (lightWorldDistance * lightWorldDistance));
     
     vec3 lightVec = normalize(lightPosition - worldSpacePos);
-    vec3 reflectVec = reflect(-lightVec, norm);
-    float pointSpec = pow(max(dot(viewDir, reflectVec), 0.0), 32);
-
     float pointDiff = max(dot(lightVec, norm), 0.0);
+    vec3 pointHalfVec = normalize(lightVec + viewDir);
+    float pointSpec = pointDiff > 0.0f ? pow(max(dot(norm, pointHalfVec), 0.0f), shininess) : 0.0f;
 
-    vec3 pointAmbient = ambColor * lightColor;
-    vec3 pointDiffuse = pointDiff * lightColor;
-    vec3 pointSpecular = specColor * pointSpec * lightColor;
-    vec3 pointResult = (pointAmbient + pointDiffuse + pointSpecular) * attenuation;
+    vec3 pointAmbient = lightColor * ambColor * attenuation;
+    vec3 pointDiffuse = lightColor * pointDiff * attenuation;
+    vec3 pointSpecular = lightColor * specColor * 3.0f * pointSpec * specularStrength * attenuation;
 
     vec3 spotLightVec = normalize(spotPosition - worldSpacePos);
     float shadowAmount = getShadowAmount(norm);
 
     float spotDiff = max(dot(norm, spotLightVec), 0.0);
-
-    vec3 spotReflect = reflect(-spotLightVec, norm);
-    float spotSpec = pow(max(dot(viewDir, spotReflect), 0.0), 32);
+    vec3 spotHalfVec = normalize(spotLightVec + viewDir);
+    float spotSpec = spotDiff > 0.0f ? pow(max(dot(norm, spotHalfVec), 0.0f), shininess) : 0.0f;
     
 
     float theta = dot(normalize(-spotLightVec), normalize(spotDirection));
@@ -128,13 +155,12 @@ void main()
     float epsilon = max(spotCutoff - spotOuterCutoff, 0.0001f);
     float spotIntensity = clamp((theta - spotOuterCutoff) / epsilon, 0.0, 1.0);
 
-    vec3 spotAmbient = ambColor * spotColor;
-    vec3 spotDiffuse = spotDiff * spotColor;
-    vec3 spotSpecular = specColor * spotSpec * spotColor;
-    vec3 spotResult = (spotAmbient + (1.0f - shadowAmount) * (spotDiffuse + spotSpecular)) * spotIntensity;
+    vec3 spotAmbient = spotColor * ambColor * spotIntensity * 0.3f;
+    vec3 spotDiffuse = spotColor * spotDiff * spotIntensity;
+    vec3 spotSpecular = spotColor * specColor * 3.0f * spotSpec * specularStrength * (1.0f - shadowAmount) * spotIntensity;
 
-    vec3 finalLight = pointResult + spotResult;
-    vec3 finalLitColor = texColor * finalLight;
+    vec3 finalLitColor = texColor * (pointAmbient + pointDiffuse + spotAmbient + (1.0f - shadowAmount) * spotDiffuse)
+                       + pointSpecular + spotSpecular;
 
     fragmentColor = vec4(finalLitColor, texSample.a);
 }
