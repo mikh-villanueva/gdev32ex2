@@ -16,6 +16,7 @@ uniform mat4 projectionTransform;
 uniform mat4 viewTransform;
 uniform mat4 modelTransform;
 uniform mat4 normalTransform;
+uniform float normalDirection;
 
 out vec3 shaderColor;
 out vec2 shaderTexCoord;
@@ -24,24 +25,18 @@ out vec3 worldSpacePos;
 out vec3 worldSpaceNorm;
 out vec3 objColor;
 
-///////////////////////////////////////////////////////////////////////////////
-// added for shadow mapping
 uniform mat4 lightTransform;
 out vec4 shaderLightSpacePosition;
-///////////////////////////////////////////////////////////////////////////////
 
 void main()
 {
     worldSpacePos = (modelTransform * vec4(vertexPosition, 1.0f)).xyz;
-    worldSpaceNorm = (normalTransform * vec4(vertexNormal, 0.0f)).xyz;
+    worldSpaceNorm = (normalTransform * vec4(vertexNormal, 0.0f)).xyz * normalDirection;
     objColor = vertexColor;
 
     gl_Position = projectionTransform * viewTransform * modelTransform * vec4(vertexPosition, 1.0f);
     shaderColor = vertexColor;
     shaderTexCoord = vertexTexCoord;
 
-    ///////////////////////////////////////////////////////////////////////////
-    // also compute this fragment position from the light's point of view
     shaderLightSpacePosition = lightTransform * modelTransform * vec4(vertexPosition, 1.0f);
-    ///////////////////////////////////////////////////////////////////////////
 }

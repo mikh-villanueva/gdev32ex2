@@ -27,87 +27,113 @@ float quadratic = 0.2f;
 
 uniform vec3 spotPosition;
 uniform vec3 spotDirection;
-uniform float spotCutoff;   // in radians
+uniform float spotCutoff;
+uniform float spotOuterCutoff;
 uniform vec3 spotColor;
 
-
-///////////////////////////////////////////////////////////////////////////////
-// added for shadow mapping
 in vec4 shaderLightSpacePosition;
 uniform sampler2D shadowMap;
+uniform bool shadowsEnabled;
+uniform int shadowSamplesPerAxis;
+uniform float shadowFilterRadius;
 
-bool inShadow()
+float randomValue(vec2 seed)
 {
-    // perform perspective division and rescale to the [0, 1] range to get the coordinates into the depth texture
+    return fract(sin(dot(seed, vec2(12.9898f, 78.233f))) * 43758.5453f);
+}
+
+float getShadowAmount(vec3 norm)
+{
+    if (!shadowsEnabled || shaderLightSpacePosition.w <= 0.0f)
+        return 0.0f;
+
     vec3 position = shaderLightSpacePosition.xyz / shaderLightSpacePosition.w;
     position = position * 0.5f + 0.5f;
 
-    // if the position is outside the light-space frustum, do NOT put the
-    // fragment in shadow, to prevent the scene from becoming dark "by default"
-    // (note that if you have a spot light, you might want to do the opposite --
-    // that is, everything outside the spot light's cone SHOULD be dark by default)
     if (position.x < 0.0f || position.x > 1.0f
         || position.y < 0.0f || position.y > 1.0f
         || position.z < 0.0f || position.z > 1.0f)
     {
-        return false;
+        return 0.0f;
     }
 
-    // access the shadow map at this position
-    float shadowMapZ = texture(shadowMap, position.xy).r;
+    vec2 texelSize = 1.0f / vec2(textureSize(shadowMap, 0));
+    vec3 shadowLightDir = normalize(spotPosition - worldSpacePos);
+    float bias = max(0.00075f, 0.003f * (1.0f - max(dot(norm, shadowLightDir), 0.0f)));
 
-    // add a bias to prevent shadow acne
-    float bias = 0.0005f;
-    shadowMapZ += bias;
+    int halfWindow = shadowSamplesPerAxis / 2;
+    float occlusion = 0.0f;
+    float samplesTaken = 0.0f;
 
-    // if the depth stored in the texture is less than the current fragment's depth, we are in shadow
-    return shadowMapZ < position.z;
+    float rotationAngle = randomValue(position.xy + worldSpacePos.xz) * 6.28318530718f;
+    mat2 rotation = mat2(cos(rotationAngle), -sin(rotationAngle),
+                         sin(rotationAngle),  cos(rotationAngle));
+
+    for (int x = -4; x <= 4; x++)
+    {
+        for (int y = -4; y <= 4; y++)
+        {
+            if (abs(x) > halfWindow || abs(y) > halfWindow)
+                continue;
+
+            vec2 gridOffset = vec2(float(x), float(y));
+            vec2 jitter = vec2(
+                randomValue(position.xy + gridOffset + worldSpacePos.xy) - 0.5f,
+                randomValue(position.yx + gridOffset + worldSpacePos.zy) - 0.5f);
+
+            vec2 sampleUv = position.xy + rotation * (gridOffset + jitter) * texelSize * shadowFilterRadius;
+            float sampleDepth = texture(shadowMap, sampleUv).r;
+
+            occlusion += (position.z - bias > sampleDepth) ? 1.0f : 0.0f;
+            samplesTaken += 1.0f;
+        }
+    }
+
+    return samplesTaken > 0.0f ? (occlusion / samplesTaken) : 0.0f;
 }
-///////////////////////////////////////////////////////////////////////////////
 
 void main()
 {
-    vec3 texColor = texture(shaderTexture, shaderTexCoord).rgb;
-    
-    // POINT LIGHT
+    vec4 texSample = texture(shaderTexture, shaderTexCoord);
+    vec3 texColor = texSample.rgb;
+    vec3 norm = normalize(worldSpaceNorm);
+    vec3 viewDir = normalize(cameraPos - worldSpacePos);
+
     float lightWorldDistance = length(lightPosition - worldSpacePos);
     float attenuation = 1.0 / (constant + linear * lightWorldDistance + quadratic * (lightWorldDistance * lightWorldDistance));
     
     vec3 lightVec = normalize(lightPosition - worldSpacePos);
-    vec3 norm = normalize(worldSpaceNorm);
-
-    vec3 viewDir = normalize(cameraPos - worldSpacePos);
     vec3 reflectVec = reflect(-lightVec, norm);
-    float spec = pow(max(dot(viewDir, reflectVec), 0.0), 32);
-    vec3 specular = specColor * spec * lightColor; 
+    float pointSpec = pow(max(dot(viewDir, reflectVec), 0.0), 32);
 
-    float diffColor = max(dot(lightVec, norm), 0);
+    float pointDiff = max(dot(lightVec, norm), 0.0);
 
-    vec3 finalColor = lightColor * (diffColor + ambColor + specular) * attenuation;
+    vec3 pointAmbient = ambColor * lightColor;
+    vec3 pointDiffuse = pointDiff * lightColor;
+    vec3 pointSpecular = specColor * pointSpec * lightColor;
+    vec3 pointResult = (pointAmbient + pointDiffuse + pointSpecular) * attenuation;
 
-
-    // SPOTLIGHT
     vec3 spotLightVec = normalize(spotPosition - worldSpacePos);
+    float shadowAmount = getShadowAmount(norm);
 
     float spotDiff = max(dot(norm, spotLightVec), 0.0);
 
     vec3 spotReflect = reflect(-spotLightVec, norm);
     float spotSpec = pow(max(dot(viewDir, spotReflect), 0.0), 32);
-    vec3 spotSpecular = specColor * spotSpec * spotColor;
     
 
     float theta = dot(normalize(-spotLightVec), normalize(spotDirection));
 
-    float spotIntensity = 0.0;
-    float outerCutoff = spotCutoff - 0.05; // small fade zone
-    float epsilon = spotCutoff - outerCutoff;
-    spotIntensity = clamp((theta - outerCutoff) / epsilon, 0.0, 1.0);
+    float epsilon = max(spotCutoff - spotOuterCutoff, 0.0001f);
+    float spotIntensity = clamp((theta - spotOuterCutoff) / epsilon, 0.0, 1.0);
 
-    vec3 spotResult = spotColor * (spotDiff + ambColor + spotSpec) * spotIntensity;
-    
-    // COMBINE
-    vec3 finalLight = finalColor + spotResult;
+    vec3 spotAmbient = ambColor * spotColor;
+    vec3 spotDiffuse = spotDiff * spotColor;
+    vec3 spotSpecular = specColor * spotSpec * spotColor;
+    vec3 spotResult = (spotAmbient + (1.0f - shadowAmount) * (spotDiffuse + spotSpecular)) * spotIntensity;
+
+    vec3 finalLight = pointResult + spotResult;
     vec3 finalLitColor = texColor * finalLight;
 
-    fragmentColor = vec4(finalLitColor, 1.0f);
+    fragmentColor = vec4(finalLitColor, texSample.a);
 }

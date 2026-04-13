@@ -1,29 +1,3 @@
-/******************************************************************************
- * CONTROLS SUMMARY
- *
- * Camera Movement:
- *   W/A/S/D   - Move forward/left/back/right
- *   Mouse     - Look around (yaw/pitch)
- *
- * Point Light Movement:
- *   T/G/F/H   - Move light X/Z (right/left, forward/back)
- *   R/Y       - Move light up/down (Y axis)
- *
- * Spotlight Movement:
- *   I/K/J/L   - Move spotlight X/Z (right/left, forward/back)
- *   U/O       - Move spotlight up/down (Y axis)
- *
- * Spotlight Direction:
- *   Arrow Keys - Change the direction the spotlight shines (yaw/pitch)
- *
- * Light Color/Height:
- *   [ / ]      - Decrease/increase point light color intensity
- *   = / -      - Raise/lower point light height
- *
- * Other:
- *   ESC        - Exit program
- ******************************************************************************/
-
  /******************************************************************************
  * This demo draws a textured quadrilateral on screen, plus the user can change
  * its position, rotation, and scaling using the WASD and arrow keys.
@@ -36,6 +10,7 @@
  * Happy hacking! - eric
  *****************************************************************************/
 
+#include <cmath>
 #include <iostream>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -48,17 +23,26 @@
 #define WINDOW_TITLE  "Hello Transform (use WASD and arrow keys)"
 GLFWwindow *pWindow;
 
-// --- Lighting variables (from box.cpp, adapted) ---
 glm::vec3 lightPosition(1.0f, 5.0f, 1.0f);
-glm::vec3 lightColor(100.0f, 100.0f, 100.0f); // Much brighter starting light
+glm::vec3 lightColor(35.0f, 35.0f, 35.0f);
 float specularity = 0.7f;
 float lightHeight = 5.0f;
 
-// Spotlight
-glm::vec3 spotPosition(1.0f, 5.0f, 1.0f);
+glm::vec3 spotPosition(0.0f, 14.0f, 0.0f);
 glm::vec3 spotDirection(0.0f, -1.0f, 0.0f);
-float spotX = 1.0f;
-float spotZ = 1.0f;
+float spotX = 0.0f;
+float spotZ = 0.0f;
+
+constexpr float SPOTLIGHT_INNER_ANGLE_DEGREES = 35.0f;
+constexpr float SPOTLIGHT_OUTER_ANGLE_DEGREES = 45.0f;
+constexpr float SHADOW_NEAR_PLANE = 0.1f;
+constexpr float SHADOW_FAR_PLANE = 100.0f;
+constexpr int SHADOW_SOFTNESS_LEVELS = 5;
+const int SHADOW_SAMPLES_PER_AXIS_BY_LEVEL[SHADOW_SOFTNESS_LEVELS] = {1, 3, 5, 7, 9};
+const float SHADOW_FILTER_RADIUS_BY_LEVEL[SHADOW_SOFTNESS_LEVELS] = {0.0f, 1.0f, 1.75f, 2.5f, 3.25f};
+
+bool shadowsEnabled = true;
+int shadowSoftnessLevel = 1;
 
 // Cube faces - 6 sprites forming a 60x30x37.5 unit cube (15x as big as chest ~4x2x2.5)
 // Positioned to contain the existing objects inside
@@ -153,7 +137,7 @@ float lastX = 320, lastY = 180;
 float yaw = -90.0f, pitch = 0.0f;
 float fov = 45.0f;
 bool firstMouse = true;
-double previousTime = 0.0;
+double lastAnimationUpdate = 0.0;
 
 // Animation points for coin
 glm::vec3 pathPointA = glm::vec3(-20.0f, -11.5f, -15.0f);
@@ -270,6 +254,110 @@ glm::mat4 getLookAtRotation(glm::vec3 from, glm::vec3 to)
     return rotation;
 }
 
+    void updateSceneAnimation(double elapsedTime)
+    {
+        coinPathTime += static_cast<float>(elapsedTime / coinPathDuration);
+        if (coinPathTime >= 1.0f) {
+            coinPathTime -= 1.0f;
+            coinPathSegment = (coinPathSegment + 1) % 3;
+        }
+        coinPos = getCoinPositionOnPath(coinPathTime, coinPathSegment);
+
+        chestPathTime += static_cast<float>(elapsedTime / chestPathDuration);
+        if (chestPathTime >= 1.0f) {
+            chestPathTime -= 1.0f;
+            chestPathSegment = (chestPathSegment + 1) % 3;
+        }
+        chestPos = getChestPositionOnPath(chestPathTime, chestPathSegment);
+    }
+
+    glm::mat4 getCoinModelTransform(double currentTime)
+    {
+        glm::vec3 nextPointCoin = getNextWaypoint(coinPathSegment);
+        glm::mat4 coinRotation = getLookAtRotation(coinPos, nextPointCoin);
+        float coinBob = std::sin(static_cast<float>(currentTime) * 3.0f) * 1.50f;
+
+        glm::mat4 modelTransform = glm::translate(glm::mat4(1.0f), coinPos + glm::vec3(0.0f, coinBob, 0.0f));
+        return modelTransform * coinRotation;
+    }
+
+    glm::mat4 getChestModelTransform(double currentTime)
+    {
+        glm::vec3 nextPointChest = getNextWaypoint(chestPathSegment);
+        glm::mat4 chestRotation = getLookAtRotation(chestPos, nextPointChest);
+        chestRotation = chestRotation * glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+
+        float chestBreath = 1.0f + std::sin(static_cast<float>(currentTime) * 4.0f) * 0.1f;
+        glm::mat4 modelTransform = glm::translate(glm::mat4(1.0f), chestPos);
+        modelTransform = modelTransform * chestRotation;
+        return modelTransform * glm::scale(glm::mat4(1.0f), glm::vec3(chestBreath, chestBreath, chestBreath));
+    }
+
+    glm::vec3 getSpotlightUpVector()
+    {
+        glm::vec3 forward = glm::normalize(spotDirection);
+        if (std::abs(glm::dot(forward, glm::vec3(0.0f, 1.0f, 0.0f))) > 0.99f)
+            return glm::vec3(0.0f, 0.0f, 1.0f);
+
+        return glm::vec3(0.0f, 1.0f, 0.0f);
+    }
+
+    glm::mat4 getSpotlightTransform()
+    {
+        glm::mat4 lightProjection = glm::perspective(
+            glm::radians(SPOTLIGHT_OUTER_ANGLE_DEGREES * 2.0f),
+            1.0f,
+            SHADOW_NEAR_PLANE,
+            SHADOW_FAR_PLANE);
+
+        glm::mat4 lightView = glm::lookAt(
+            spotPosition,
+            spotPosition + glm::normalize(spotDirection),
+            getSpotlightUpVector());
+
+        return lightProjection * lightView;
+    }
+
+    void drawModel(GLuint activeShader, int modelIndex, const glm::mat4& modelTransform, bool bindTexture)
+    {
+        glUniformMatrix4fv(glGetUniformLocation(activeShader, "modelTransform"),
+                           1, GL_FALSE, glm::value_ptr(modelTransform));
+
+        GLint normalDirectionLocation = glGetUniformLocation(activeShader, "normalDirection");
+        if (normalDirectionLocation != -1)
+        {
+            float normalDirection = modelIndex >= 2 ? -1.0f : 1.0f;
+            glUniform1f(normalDirectionLocation, normalDirection);
+        }
+
+        GLint normalTransformLocation = glGetUniformLocation(activeShader, "normalTransform");
+        if (normalTransformLocation != -1)
+        {
+            glm::mat4 normalTransform = glm::transpose(glm::inverse(modelTransform));
+            glUniformMatrix4fv(normalTransformLocation,
+                               1, GL_FALSE, glm::value_ptr(normalTransform));
+        }
+
+        if (bindTexture)
+        {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, texture[modelIndex]);
+        }
+
+        glBindVertexArray(vao[modelIndex]);
+        glDrawArrays(GL_TRIANGLES, 0, vertices[modelIndex].size() / 11);
+    }
+
+    void drawScene(GLuint activeShader, double currentTime, bool bindTexture)
+    {
+        drawModel(activeShader, 0, getCoinModelTransform(currentTime), bindTexture);
+        drawModel(activeShader, 1, getChestModelTransform(currentTime), bindTexture);
+
+        glm::mat4 roomTransform(1.0f);
+        for (int i = 2; i < NUM_MODELS; i++)
+            drawModel(activeShader, i, roomTransform, bindTexture);
+    }
+
 ///////////////////////////////////////////////////////////////////////////////
 // SHADOW MAPPING CODE
 
@@ -289,9 +377,15 @@ bool setupShadowMap()
     glBindTexture(GL_TEXTURE_2D, shadowMapTexture);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_SIZE, SHADOW_SIZE,
                  0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    float borderColor[] = {1.0f, 1.0f, 1.0f, 1.0f};
+    glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadowMapTexture, 0);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
 
     // check if we did everything right
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
@@ -310,7 +404,7 @@ bool setupShadowMap()
     return true;
 }
 
-glm::mat4 renderShadowMap()
+void renderShadowMap(const glm::mat4& lightTransform, double currentTime)
 {
     // use the shadow framebuffer for drawing the shadow map
     glBindFramebuffer(GL_FRAMEBUFFER, shadowMapFbo);
@@ -325,85 +419,9 @@ glm::mat4 renderShadowMap()
     // using the shadow map shader...
     glUseProgram(shadowMapShader);
 
-    // ... set up the light space matrix...
-    // (note that if you use a spot light, the FOV and the center position
-    // vector should be set to the spot light's outer cone angle times 2
-    // and the spot light's focus point, respectively)
-    glm::mat4 lightTransform;
-    lightTransform = glm::perspective(glm::radians(90.0f),       // fov
-                                      1.0f,                      // aspect ratio
-                                      0.1f,                      // near plane
-                                      100.0f);                   // far plane
-    lightTransform *= glm::lookAt(lightPosition,                 // eye position
-                                  glm::vec3(0.0f, 0.0f, 0.0f),   // center position
-                                  glm::vec3(0.0f, 1.0f, 0.0f));  // up vector
     glUniformMatrix4fv(glGetUniformLocation(shadowMapShader, "lightTransform"),
                        1, GL_FALSE, glm::value_ptr(lightTransform));
-
-
-    //=========Pathing Animations==========//
-    // find the elapsed time since the last frame
-    double currentTime = glfwGetTime();
-    double elapsedTime = (currentTime - previousTime);
-    float camSpeed = 5.0f; // units per second
-    float moveSpeed = elapsedTime * camSpeed;
-    float turnSpeed = elapsedTime * (camSpeed/2);
-    previousTime = currentTime;
-
-    // Update animation - move coin along the path
-    coinPathTime += elapsedTime / coinPathDuration;
-    if (coinPathTime >= 1.0f) {
-        coinPathTime -= 1.0f;
-        coinPathSegment = (coinPathSegment + 1) % 3;  // cycle through segments
-    }
-    coinPos = getCoinPositionOnPath(coinPathTime, coinPathSegment);
-
-    // Update animation - move chest along the path independently
-    chestPathTime += elapsedTime / chestPathDuration;
-    if (chestPathTime >= 1.0f) {
-        chestPathTime -= 1.0f;
-        chestPathSegment = (chestPathSegment + 1) % 3;  // cycle through segments
-    }
-    chestPos = getChestPositionOnPath(chestPathTime, chestPathSegment);
-
-    // Draw coin at its animated position
-    glm::vec3 nextPointCoin = getNextWaypoint(coinPathSegment);
-    glm::mat4 coinRotation = getLookAtRotation(coinPos, nextPointCoin);
-    float coinBob = sin(currentTime * 3.0f) * 1.50f; // uses vertical bobbing to emulate floating movement
-    glm::mat4 modelTransform = glm::translate(glm::mat4(1.0f), coinPos + glm::vec3(0.0f, coinBob, 0.0f));
-    modelTransform = modelTransform * coinRotation;
-    glUniformMatrix4fv(glGetUniformLocation(shader, "modelTransform"),
-                       1, GL_FALSE, glm::value_ptr(modelTransform));
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, texture[0]);
-    glBindVertexArray(vao[0]);
-    glDrawArrays(GL_TRIANGLES, 0, vertices[0].size() / 11);
-
-    // Draw chest at its animated position
-    glm::vec3 nextPointChest = getNextWaypoint(chestPathSegment);
-    glm::mat4 chestRotation = getLookAtRotation(chestPos, nextPointChest);
-    chestRotation = chestRotation * glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-    float chestBreath = 1.0f + sin(currentTime * 4.0f) * 0.1f; // uses scaling to make the chest look like it's bounding after the coin
-    modelTransform = glm::translate(glm::mat4(1.0f), chestPos);
-    modelTransform = modelTransform * chestRotation;
-    modelTransform = modelTransform * glm::scale(glm::mat4(1.0f), glm::vec3(chestBreath, chestBreath, chestBreath));
-    glUniformMatrix4fv(glGetUniformLocation(shader, "modelTransform"),
-                       1, GL_FALSE, glm::value_ptr(modelTransform));
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, texture[1]);
-    glBindVertexArray(vao[1]);
-    glDrawArrays(GL_TRIANGLES, 0, vertices[1].size() / 11);
-
-    // Draw the 6 cube faces (stationary, identity transform)
-    modelTransform = glm::mat4(1.0f);
-    glUniformMatrix4fv(glGetUniformLocation(shader, "modelTransform"),
-                       1, GL_FALSE, glm::value_ptr(modelTransform));
-    for (int i = 2; i < NUM_MODELS; i++) {
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, texture[i]);
-        glBindVertexArray(vao[i]);
-        glDrawArrays(GL_TRIANGLES, 0, vertices[i].size() / 11);
-    }
+    drawScene(shadowMapShader, currentTime, false);
     
     // set the framebuffer back to the default onscreen buffer
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -413,8 +431,6 @@ glm::mat4 renderShadowMap()
     glfwGetFramebufferSize(pWindow, &width, &height);
     glViewport(0, 0, width, height);
 
-    // we will need the light transformation matrix again in the main rendering code
-    return lightTransform;
 }
 
 // SHADOW MAPPING CODE
@@ -517,11 +533,9 @@ bool setup()
 // called by the main function to do rendering per frame
 void render()
 {
-    // --- Spotlight direction controls (arrow keys) ---
     static float spotYaw = 0.0f;
-    static float spotPitch = 0.0f;
+    static float spotPitch = -90.0f;
     const float spotTurnSpeed = 1.0f; // degrees per frame
-    // Arrow keys adjust spotlight direction
     if (glfwGetKey(pWindow, GLFW_KEY_LEFT) == GLFW_PRESS)
         spotYaw -= spotTurnSpeed;
     if (glfwGetKey(pWindow, GLFW_KEY_RIGHT) == GLFW_PRESS)
@@ -533,55 +547,26 @@ void render()
 
     
 
-    // Clamp pitch to avoid flipping
     if (spotPitch > 89.0f) spotPitch = 89.0f;
     if (spotPitch < -89.0f) spotPitch = -89.0f;
 
-    // Convert yaw/pitch to direction vector
     float yawRad = glm::radians(spotYaw);
     float pitchRad = glm::radians(spotPitch);
-    spotDirection.x = cos(pitchRad) * sin(yawRad);
-    spotDirection.y = sin(pitchRad);
-    spotDirection.z = -cos(pitchRad) * cos(yawRad);
-    
-    // find the elapsed time since the last frame
+    spotDirection.x = std::cos(pitchRad) * std::sin(yawRad);
+    spotDirection.y = std::sin(pitchRad);
+    spotDirection.z = -std::cos(pitchRad) * std::cos(yawRad);
+    spotDirection = glm::normalize(spotDirection);
+
     double currentTime = glfwGetTime();
-    double elapsedTime = (currentTime - previousTime);
-    float camSpeed = 5.0f; // units per second
-    float moveSpeed = elapsedTime * camSpeed;
-    float turnSpeed = elapsedTime * (camSpeed/2);
-    previousTime = currentTime;
+    if (lastAnimationUpdate == 0.0)
+        lastAnimationUpdate = currentTime;
 
-    // Update animation - move coin along the path
-    coinPathTime += elapsedTime / coinPathDuration;
-    if (coinPathTime >= 1.0f) {
-        coinPathTime -= 1.0f;
-        coinPathSegment = (coinPathSegment + 1) % 3;  // cycle through segments
-    }
-    coinPos = getCoinPositionOnPath(coinPathTime, coinPathSegment);
+    double elapsedTime = currentTime - lastAnimationUpdate;
+    lastAnimationUpdate = currentTime;
+    if (elapsedTime < 0.0)
+        elapsedTime = 0.0;
 
-    // Update animation - move chest along the path independently
-    chestPathTime += elapsedTime / chestPathDuration;
-    if (chestPathTime >= 1.0f) {
-        chestPathTime -= 1.0f;
-        chestPathSegment = (chestPathSegment + 1) % 3;  // cycle through segments
-    }
-    chestPos = getChestPositionOnPath(chestPathTime, chestPathSegment);
-
-    // Camera movement controls (WASD) - relative to camera forward direction
-    // Calculate forward and right vectors from current yaw and pitch
-    glm::vec3 cameraForward = glm::normalize(glm::vec3(
-        sin(yaw),
-        0.0f,  // don't move up/down based on pitch
-        -cos(yaw)
-    ));
-    glm::vec3 cameraRight = glm::normalize(glm::cross(cameraForward, glm::vec3(0.0f, 1.0f, 0.0f)));
-
-    // Camera movement is handled in processInput() for WASD and mouse look
-
-
-    // --- Lighting controls (from box.cpp) ---
-    // Point light movement (T/G/F/H/R/Y)
+    updateSceneAnimation(elapsedTime);
     if (glfwGetKey(pWindow, GLFW_KEY_T) == GLFW_PRESS)
         lightPosition.x += 0.1f;
     if (glfwGetKey(pWindow, GLFW_KEY_G) == GLFW_PRESS)
@@ -595,7 +580,6 @@ void render()
     if (glfwGetKey(pWindow, GLFW_KEY_Y) == GLFW_PRESS)
         lightHeight -= 0.05f;
 
-    // Spotlight movement (I/K/J/L/U/O)
     if (glfwGetKey(pWindow, GLFW_KEY_I) == GLFW_PRESS)
         spotX += 0.1f;
     if (glfwGetKey(pWindow, GLFW_KEY_K) == GLFW_PRESS)
@@ -609,7 +593,6 @@ void render()
     if (glfwGetKey(pWindow, GLFW_KEY_O) == GLFW_PRESS)
         spotPosition.y -= 0.1f;
 
-    // Light color and height controls
     if (glfwGetKey(pWindow, GLFW_KEY_LEFT_BRACKET) == GLFW_PRESS)
         lightColor -= glm::vec3(0.1f);
     if (glfwGetKey(pWindow, GLFW_KEY_RIGHT_BRACKET) == GLFW_PRESS)
@@ -619,6 +602,9 @@ void render()
     if (glfwGetKey(pWindow, GLFW_KEY_MINUS) == GLFW_PRESS)
         lightHeight -= 0.05f;
 
+    lightPosition.y = lightHeight;
+    spotPosition = glm::vec3(spotX, spotPosition.y, spotZ);
+
     float cameraBoundX = 28.0f;
     float cameraBoundZ = 17.0f;
     if (cameraPos.x > cameraBoundX) cameraPos.x = cameraBoundX;
@@ -626,23 +612,17 @@ void render()
     if (cameraPos.z > cameraBoundZ) cameraPos.z = cameraBoundZ;
     if (cameraPos.z < -cameraBoundZ) cameraPos.z = -cameraBoundZ;
 
-    ///////////////////////////////////////////////////////////////////////////
-    // draw the shadow map
-    glm::mat4 lightTransform = renderShadowMap();
-    ///////////////////////////////////////////////////////////////////////////
-
-    // Camera turning is handled by mouse_callback; arrow keys are not used for camera
+    glm::mat4 lightTransform(1.0f);
+    if (shadowsEnabled)
+    {
+        lightTransform = getSpotlightTransform();
+        renderShadowMap(lightTransform, currentTime);
+    }
 
     glClearColor(0.0f, 0.3f, 0.3f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-
     glUseProgram(shader);
-
-    // --- Lighting uniforms (set before drawing) ---
-    // Update light and spot positions if animated
-    lightPosition.y = lightHeight;
-    spotPosition = glm::vec3(spotX, spotPosition.y, spotZ);
 
     glUniform3fv(glGetUniformLocation(shader, "lightPosition"), 1, &lightPosition[0]);
     glUniform3fv(glGetUniformLocation(shader, "lightColor"), 1, &lightColor[0]);
@@ -650,15 +630,26 @@ void render()
 
     glUniform3fv(glGetUniformLocation(shader, "spotPosition"), 1, &spotPosition[0]);
     glUniform3fv(glGetUniformLocation(shader, "spotDirection"), 1, &spotDirection[0]);
-    glUniform1f(glGetUniformLocation(shader, "spotCutoff"), glm::cos(glm::radians(15.0f)));
+    glUniform1f(glGetUniformLocation(shader, "spotCutoff"), glm::cos(glm::radians(SPOTLIGHT_INNER_ANGLE_DEGREES)));
+    glUniform1f(glGetUniformLocation(shader, "spotOuterCutoff"), glm::cos(glm::radians(SPOTLIGHT_OUTER_ANGLE_DEGREES)));
     glUniform3f(glGetUniformLocation(shader, "spotColor"), 1.0f, 1.0f, 1.0f);
 
     glUniform3fv(glGetUniformLocation(shader, "cameraPos"), 1, &cameraPos[0]);
+    glUniform1i(glGetUniformLocation(shader, "shaderTexture"), 0);
+    glUniform1i(glGetUniformLocation(shader, "shadowMap"), 1);
+    glUniform1i(glGetUniformLocation(shader, "shadowsEnabled"), shadowsEnabled ? 1 : 0);
+    glUniform1i(glGetUniformLocation(shader, "shadowSamplesPerAxis"), SHADOW_SAMPLES_PER_AXIS_BY_LEVEL[shadowSoftnessLevel]);
+    glUniform1f(glGetUniformLocation(shader, "shadowFilterRadius"), SHADOW_FILTER_RADIUS_BY_LEVEL[shadowSoftnessLevel]);
 
     // ... set up the projection matrix...
+    int width, height;
+    glfwGetFramebufferSize(pWindow, &width, &height);
+    if (height <= 0)
+        height = 1;
+
     glm::mat4 projectionTransform;
-    projectionTransform = glm::perspective(glm::radians(45.0f),
-                                           (float) WINDOW_WIDTH / WINDOW_HEIGHT,
+    projectionTransform = glm::perspective(glm::radians(fov),
+                                           static_cast<float>(width) / static_cast<float>(height),
                                            0.1f, 100.0f);
     glUniformMatrix4fv(glGetUniformLocation(shader, "projectionTransform"),
                        1, GL_FALSE, glm::value_ptr(projectionTransform));
@@ -671,14 +662,6 @@ void render()
     glUniformMatrix4fv(glGetUniformLocation(shader, "viewTransform"),
                        1, GL_FALSE, glm::value_ptr(view));
 
-    glm::mat4 viewTransform;
-    // Calculate look direction from yaw and pitch
-    glm::vec3 lookDirection = glm::vec3(
-        sin(yaw) * cos(pitch),
-        sin(pitch),
-        -cos(yaw) * cos(pitch)
-    );
-
     ///////////////////////////////////////////////////////////////////////////
     // ... set up the light transformation (for looking up the shadow map)...
     glUniformMatrix4fv(glGetUniformLocation(shader, "lightTransform"),
@@ -687,47 +670,9 @@ void render()
     // ... set the active texture...
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, shadowMapTexture);
-    glUniform1i(glGetUniformLocation(shader, "shadowMap"),  1);
     ///////////////////////////////////////////////////////////////////////////
 
-    // Draw coin at its animated position
-    glm::vec3 nextPointCoin = getNextWaypoint(coinPathSegment);
-    glm::mat4 coinRotation = getLookAtRotation(coinPos, nextPointCoin);
-    float coinBob = sin(currentTime * 3.0f) * 1.50f; // uses vertical bobbing to emulate floating movement
-    glm::mat4 modelTransform = glm::translate(glm::mat4(1.0f), coinPos + glm::vec3(0.0f, coinBob, 0.0f));
-    modelTransform = modelTransform * coinRotation;
-    glUniformMatrix4fv(glGetUniformLocation(shader, "modelTransform"),
-                       1, GL_FALSE, glm::value_ptr(modelTransform));
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, texture[0]);
-    glBindVertexArray(vao[0]);
-    glDrawArrays(GL_TRIANGLES, 0, vertices[0].size() / 11);
-
-    // Draw chest at its animated position
-    glm::vec3 nextPointChest = getNextWaypoint(chestPathSegment);
-    glm::mat4 chestRotation = getLookAtRotation(chestPos, nextPointChest);
-    chestRotation = chestRotation * glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-    float chestBreath = 1.0f + sin(currentTime * 4.0f) * 0.1f; // uses scaling to make the chest look like it's bounding after the coin
-    modelTransform = glm::translate(glm::mat4(1.0f), chestPos);
-    modelTransform = modelTransform * chestRotation;
-    modelTransform = modelTransform * glm::scale(glm::mat4(1.0f), glm::vec3(chestBreath, chestBreath, chestBreath));
-    glUniformMatrix4fv(glGetUniformLocation(shader, "modelTransform"),
-                       1, GL_FALSE, glm::value_ptr(modelTransform));
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, texture[1]);
-    glBindVertexArray(vao[1]);
-    glDrawArrays(GL_TRIANGLES, 0, vertices[1].size() / 11);
-
-    // Draw the 6 cube faces (stationary, identity transform)
-    modelTransform = glm::mat4(1.0f);
-    glUniformMatrix4fv(glGetUniformLocation(shader, "modelTransform"),
-                       1, GL_FALSE, glm::value_ptr(modelTransform));
-    for (int i = 2; i < NUM_MODELS; i++) {
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, texture[i]);
-        glBindVertexArray(vao[i]);
-        glDrawArrays(GL_TRIANGLES, 0, vertices[i].size() / 11);
-    }
+    drawScene(shader, currentTime, true);
 }
 
 void processInput(GLFWwindow *window)
@@ -783,9 +728,22 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 // handler called by GLFW when there is a keyboard event
 void handleKeys(GLFWwindow* pWindow, int key, int scancode, int action, int mode)
 {
+    (void) scancode;
+    (void) mode;
+
     // pressing Esc closes the window
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
         glfwSetWindowShouldClose(pWindow, GL_TRUE);
+
+    if (action == GLFW_PRESS)
+    {
+        if (key == GLFW_KEY_P)
+            shadowsEnabled = !shadowsEnabled;
+        else if (key == GLFW_KEY_N && shadowSoftnessLevel > 0)
+            shadowSoftnessLevel--;
+        else if (key == GLFW_KEY_M && shadowSoftnessLevel < SHADOW_SOFTNESS_LEVELS - 1)
+            shadowSoftnessLevel++;
+    }
 }
 
 // handler called by GLFW when the window is resized

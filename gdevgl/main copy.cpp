@@ -1,29 +1,3 @@
-/******************************************************************************
- * CONTROLS SUMMARY
- *
- * Camera Movement:
- *   W/A/S/D   - Move forward/left/back/right
- *   Mouse     - Look around (yaw/pitch)
- *
- * Point Light Movement:
- *   T/G/F/H   - Move light X/Z (right/left, forward/back)
- *   R/Y       - Move light up/down (Y axis)
- *
- * Spotlight Movement:
- *   I/K/J/L   - Move spotlight X/Z (right/left, forward/back)
- *   U/O       - Move spotlight up/down (Y axis)
- *
- * Spotlight Direction:
- *   Arrow Keys - Change the direction the spotlight shines (yaw/pitch)
- *
- * Light Color/Height:
- *   [ / ]      - Decrease/increase point light color intensity
- *   = / -      - Raise/lower point light height
- *
- * Other:
- *   ESC        - Exit program
- ******************************************************************************/
-
  /******************************************************************************
  * This demo draws a textured quadrilateral on screen, plus the user can change
  * its position, rotation, and scaling using the WASD and arrow keys.
@@ -50,7 +24,7 @@ GLFWwindow *pWindow;
 
 // --- Lighting variables (from box.cpp, adapted) ---
 glm::vec3 lightPosition(1.0f, 5.0f, 1.0f);
-glm::vec3 lightColor(100.0f, 100.0f, 100.0f); // Much brighter starting light
+glm::vec3 lightColor(100.0f, 100.0f, 100.0f);
 float specularity = 0.7f;
 float lightHeight = 5.0f;
 
