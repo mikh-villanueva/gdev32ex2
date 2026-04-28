@@ -51,6 +51,8 @@ uniform float shadowFilterRadius;
 uniform float pointShadowFarPlane;
 uniform vec3 materialEmissionColor;
 uniform float materialEmissionStrength;
+uniform bool clipPlaneEnabled;
+uniform vec4 clipPlaneWorld;
 
 const vec3 pointShadowOffsets[20] = vec3[](
     vec3(0.0f, 0.0f, 0.0f),
@@ -208,6 +210,9 @@ float getPointShadowAmount(vec3 norm, vec3 pointLightPosition, samplerCube shado
 
 void main()
 {
+    if (clipPlaneEnabled && dot(vec4(worldSpacePos, 1.0f), clipPlaneWorld) < 0.0f) // discards useless fragments for better performance using the clip plane as a basis since some things (like the puddle) are very prone to going underneath the floor and stuff; learned this one from reddit!
+        discard;
+
     vec4 texSample = texture(shaderTexture, shaderTexCoord);
     vec3 texColor = texSample.rgb;
     vec3 norm = getSurfaceNormal();

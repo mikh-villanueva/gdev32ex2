@@ -161,6 +161,12 @@ GLuint shader;      // combined vertex and fragment shader
 GLuint texture[NUM_MODELS];     // texture object
 GLuint specularMapTexture[NUM_MODELS] = {};
 GLuint normalMapTexture[NUM_MODELS] = {};
+GLuint puddleShader = 0;
+GLuint puddleVao = 0;
+GLuint puddleVbo = 0;
+GLuint reflectionFramebuffer = 0;
+GLuint reflectionColorTexture = 0;
+GLuint reflectionDepthBuffer = 0;
 
 bool useCoinSpecular = true;
 bool useChestSpecular = true;
@@ -210,6 +216,11 @@ const glm::vec3 glassBottlePositions[glassBottleCount] = {
     glm::vec3(18.0f, -14.95f, 78.0f),
 };
 const float glassBottleRotations[glassBottleCount] = {18.0f, -32.0f, 24.0f};
+
+constexpr float puddleHeight = -14.97f;
+constexpr float puddleWidth = 35.0f;
+constexpr float puddleDepth = 28.5f;
+const glm::vec3 puddleCenter(0.0f, puddleHeight, -2.0f);
 
 void load_model(const char* filename, std::vector<float>& vertices)
 {
@@ -966,6 +977,28 @@ glm::mat4 getLookAtRotation(glm::vec3 from, glm::vec3 to)
             drawModel(activeShader, modelBottle, getGlassBottleModelTransform(bottleIndex), bindTexture);
     }
 
+    glm::mat4 getMirrorTransform(float planeHeight)
+    {
+        return glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, planeHeight * 2.0f, 0.0f))
+             * glm::scale(glm::mat4(1.0f), glm::vec3(1.0f, -1.0f, 1.0f));
+    }
+
+    glm::vec3 transformPoint(const glm::mat4& transform, const glm::vec3& point)
+    {
+        return glm::vec3(transform * glm::vec4(point, 1.0f));
+    }
+
+    glm::vec3 transformDirection(const glm::mat4& transform, const glm::vec3& direction)
+    {
+        return glm::normalize(glm::vec3(transform * glm::vec4(direction, 0.0f)));
+    }
+
+    glm::mat4 getPuddleModelTransform()
+    {
+        return glm::translate(glm::mat4(1.0f), puddleCenter)
+             * glm::scale(glm::mat4(1.0f), glm::vec3(puddleWidth, 1.0f, puddleDepth));
+    }
+
 ///////////////////////////////////////////////////////////////////////////////
 // SHADOW MAPPING CODE
 
@@ -976,6 +1009,8 @@ GLuint shadowMapShader;   // shadow map shader
 GLuint pointShadowMapFbo;
 GLuint pointShadowMapTextures[pointLightCount] = {};
 GLuint pointShadowMapShader;
+constexpr int reflectionTextureWidth = WINDOW_WIDTH;
+constexpr int reflectionTextureHeight = WINDOW_HEIGHT;
 
 void restoreWindowViewport()
 {
@@ -1142,6 +1177,200 @@ void renderPointShadowMaps(double currentTime)
         renderPointShadowMap(lightIndex, pointLightPositions[lightIndex], currentTime);
 }
 
+bool setupReflectionFramebuffer()
+{
+    glGenFramebuffers(1, &reflectionFramebuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, reflectionFramebuffer);
+
+    glGenTextures(1, &reflectionColorTexture);
+    glBindTexture(GL_TEXTURE_2D, reflectionColorTexture);
+    glTexImage2D(GL_TEXTURE_2D,
+                 0,
+                 GL_RGB,
+                 reflectionTextureWidth,
+                 reflectionTextureHeight,
+                 0,
+                 GL_RGB,
+                 GL_UNSIGNED_BYTE,
+                 NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,
+                           GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D,
+                           reflectionColorTexture,
+                           0);
+
+    glGenRenderbuffers(1, &reflectionDepthBuffer);
+    glBindRenderbuffer(GL_RENDERBUFFER, reflectionDepthBuffer);
+    glRenderbufferStorage(GL_RENDERBUFFER,
+                          GL_DEPTH24_STENCIL8,
+                          reflectionTextureWidth,
+                          reflectionTextureHeight);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER,
+                              GL_DEPTH_STENCIL_ATTACHMENT,
+                              GL_RENDERBUFFER,
+                              reflectionDepthBuffer);
+
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+    {
+        std::cout << "Could not create reflection framebuffer.\n";
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        return false;
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    return true;
+}
+
+bool setupPuddle()
+{
+    const float puddleVertices[] = {
+        -0.5f, 0.0f, -0.5f, 0.0f, 0.0f,
+         0.5f, 0.0f, -0.5f, 1.0f, 0.0f,
+         0.5f, 0.0f,  0.5f, 1.0f, 1.0f,
+        -0.5f, 0.0f, -0.5f, 0.0f, 0.0f,
+         0.5f, 0.0f,  0.5f, 1.0f, 1.0f,
+        -0.5f, 0.0f,  0.5f, 0.0f, 1.0f,
+    };
+
+    glGenVertexArrays(1, &puddleVao);
+    glGenBuffers(1, &puddleVbo);
+    glBindVertexArray(puddleVao);
+    glBindBuffer(GL_ARRAY_BUFFER, puddleVbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(puddleVertices), puddleVertices, GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*) 0);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*) (3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+
+    puddleShader = gdevLoadShader("puddle.vs", "puddle.fs");
+    if (! puddleShader)
+        return false;
+
+    return true;
+}
+
+void configureSceneShader(GLuint activeShader,
+                          const glm::mat4& projectionTransform,
+                          const glm::mat4& viewTransform,
+                          const glm::mat4& lightTransform,
+                          const glm::vec3& activeCameraPos,
+                          bool clipPlaneEnabled,
+                          const glm::vec4& clipPlaneWorld)
+{
+    glUseProgram(activeShader);
+
+    glUniform3fv(glGetUniformLocation(activeShader, "lightPosition"), 1, &lightPosition[0]);
+    glUniform3fv(glGetUniformLocation(activeShader, "lightColor"), 1, &lightColor[0]);
+    glUniform3fv(glGetUniformLocation(activeShader, "secondaryLightPosition"), 1, &secondaryLightPosition[0]);
+    glUniform3fv(glGetUniformLocation(activeShader, "secondaryLightColor"), 1, &secondaryLightColor[0]);
+    glUniform1f(glGetUniformLocation(activeShader, "specColor"), specularity);
+
+    glUniform3fv(glGetUniformLocation(activeShader, "spotPosition"), 1, &spotPosition[0]);
+    glUniform3fv(glGetUniformLocation(activeShader, "spotDirection"), 1, &spotDirection[0]);
+    glUniform1f(glGetUniformLocation(activeShader, "spotCutoff"), glm::cos(glm::radians(spotInnerAngleDegrees)));
+    glUniform1f(glGetUniformLocation(activeShader, "spotOuterCutoff"), glm::cos(glm::radians(spotOuterAngleDegrees)));
+    glUniform3f(glGetUniformLocation(activeShader, "spotColor"), 1.0f, 1.0f, 1.0f);
+
+    glUniform3fv(glGetUniformLocation(activeShader, "cameraPos"), 1, &activeCameraPos[0]);
+    glUniform1i(glGetUniformLocation(activeShader, "shaderTexture"), 0);
+    glUniform1i(glGetUniformLocation(activeShader, "specularTexture"), 1);
+    glUniform1i(glGetUniformLocation(activeShader, "normalMap"), 2);
+    glUniform1i(glGetUniformLocation(activeShader, "shadowMap"), 3);
+    glUniform1i(glGetUniformLocation(activeShader, "pointShadowMap"), 4);
+    glUniform1i(glGetUniformLocation(activeShader, "secondaryPointShadowMap"), 5);
+    glUniform1i(glGetUniformLocation(activeShader, "shadowsEnabled"), shadowsEnabled ? 1 : 0);
+    glUniform1i(glGetUniformLocation(activeShader, "shadowSamplesPerAxis"), shadowSamplesPerAxisByLevel[shadowSoftnessLevel]);
+    glUniform1f(glGetUniformLocation(activeShader, "shadowFilterRadius"), shadowFilterRadiusByLevel[shadowSoftnessLevel]);
+    glUniform1f(glGetUniformLocation(activeShader, "pointShadowFarPlane"), pointShadowFarPlane);
+    glUniformMatrix4fv(glGetUniformLocation(activeShader, "projectionTransform"),
+                       1, GL_FALSE, glm::value_ptr(projectionTransform));
+    glUniformMatrix4fv(glGetUniformLocation(activeShader, "viewTransform"),
+                       1, GL_FALSE, glm::value_ptr(viewTransform));
+    glUniformMatrix4fv(glGetUniformLocation(activeShader, "lightTransform"),
+                       1, GL_FALSE, glm::value_ptr(lightTransform));
+
+    GLint clipPlaneEnabledLocation = glGetUniformLocation(activeShader, "clipPlaneEnabled");
+    if (clipPlaneEnabledLocation != -1)
+        glUniform1i(clipPlaneEnabledLocation, clipPlaneEnabled ? 1 : 0);
+
+    GLint clipPlaneWorldLocation = glGetUniformLocation(activeShader, "clipPlaneWorld");
+    if (clipPlaneWorldLocation != -1)
+        glUniform4fv(clipPlaneWorldLocation, 1, glm::value_ptr(clipPlaneWorld));
+
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, shadowMapTexture);
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, pointShadowMapTextures[0]);
+    glActiveTexture(GL_TEXTURE5);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, pointShadowMapTextures[1]);
+}
+
+void renderReflectionTexture(double currentTime,
+                             const glm::mat4& projectionTransform,
+                             const glm::mat4& reflectionViewTransform,
+                             const glm::mat4& lightTransform,
+                             const glm::vec3& reflectionCameraPos)
+{
+    glBindFramebuffer(GL_FRAMEBUFFER, reflectionFramebuffer);
+    glViewport(0, 0, reflectionTextureWidth, reflectionTextureHeight);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    configureSceneShader(shader,
+                         projectionTransform,
+                         reflectionViewTransform,
+                         lightTransform,
+                         reflectionCameraPos,
+                         true,
+                         glm::vec4(0.0f, 1.0f, 0.0f, -puddleHeight));
+
+    drawScene(shader, currentTime, true, true);
+
+    glDepthMask(GL_FALSE);
+    drawGlassBottles(shader, true);
+    glDepthMask(GL_TRUE);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    restoreWindowViewport();
+}
+
+void drawPuddle(const glm::mat4& projectionTransform,
+                const glm::mat4& viewTransform,
+                const glm::mat4& reflectionViewTransform,
+                const glm::vec3& activeCameraPos,
+                double currentTime)
+{
+    glUseProgram(puddleShader);
+
+    glm::mat4 modelTransform = getPuddleModelTransform();
+    glm::mat4 reflectionViewProjection = projectionTransform * reflectionViewTransform;
+
+    glUniformMatrix4fv(glGetUniformLocation(puddleShader, "modelTransform"),
+                       1, GL_FALSE, glm::value_ptr(modelTransform));
+    glUniformMatrix4fv(glGetUniformLocation(puddleShader, "viewTransform"),
+                       1, GL_FALSE, glm::value_ptr(viewTransform));
+    glUniformMatrix4fv(glGetUniformLocation(puddleShader, "projectionTransform"),
+                       1, GL_FALSE, glm::value_ptr(projectionTransform));
+    glUniformMatrix4fv(glGetUniformLocation(puddleShader, "reflectionViewProjection"),
+                       1, GL_FALSE, glm::value_ptr(reflectionViewProjection));
+    glUniform3fv(glGetUniformLocation(puddleShader, "cameraPos"), 1, &activeCameraPos[0]);
+    glUniform1f(glGetUniformLocation(puddleShader, "time"), static_cast<float>(currentTime));
+    glUniform1i(glGetUniformLocation(puddleShader, "reflectionTexture"), 0);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, reflectionColorTexture);
+
+    glDepthMask(GL_FALSE);
+    glBindVertexArray(puddleVao);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glDepthMask(GL_TRUE);
+}
+
 // SHADOW MAPPING CODE
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -1267,10 +1496,14 @@ bool setup()
     // glCullFace(GL_BACK);
     // glFrontFace(GL_CCW);
 
-    // enable OpenGL blending so that texels with alpha values less than one are drawn transparent
-    // (you can omit these lines if you don't use alpha)
+    // enable OpenGL blending so that stuff with alpha values less than one are drawn transparent (culling, practically)
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    if (! setupReflectionFramebuffer())
+        return false;
+    if (! setupPuddle())
+        return false;
 
     ///////////////////////////////////////////////////////////////////////////
     // setup shadow rendering
@@ -1390,35 +1623,6 @@ void render()
         renderShadowMap(lightTransform, currentTime);
     }
 
-    glClearColor(0.0f, 0.3f, 0.3f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    glUseProgram(shader);
-
-    glUniform3fv(glGetUniformLocation(shader, "lightPosition"), 1, &lightPosition[0]);
-    glUniform3fv(glGetUniformLocation(shader, "lightColor"), 1, &lightColor[0]);
-    glUniform3fv(glGetUniformLocation(shader, "secondaryLightPosition"), 1, &secondaryLightPosition[0]);
-    glUniform3fv(glGetUniformLocation(shader, "secondaryLightColor"), 1, &secondaryLightColor[0]);
-    glUniform1f(glGetUniformLocation(shader, "specColor"), specularity);
-
-    glUniform3fv(glGetUniformLocation(shader, "spotPosition"), 1, &spotPosition[0]);
-    glUniform3fv(glGetUniformLocation(shader, "spotDirection"), 1, &spotDirection[0]);
-    glUniform1f(glGetUniformLocation(shader, "spotCutoff"), glm::cos(glm::radians(spotInnerAngleDegrees)));
-    glUniform1f(glGetUniformLocation(shader, "spotOuterCutoff"), glm::cos(glm::radians(spotOuterAngleDegrees)));
-    glUniform3f(glGetUniformLocation(shader, "spotColor"), 1.0f, 1.0f, 1.0f);
-
-    glUniform3fv(glGetUniformLocation(shader, "cameraPos"), 1, &cameraPos[0]);
-    glUniform1i(glGetUniformLocation(shader, "shaderTexture"), 0);
-    glUniform1i(glGetUniformLocation(shader, "specularTexture"), 1);
-    glUniform1i(glGetUniformLocation(shader, "normalMap"), 2);
-    glUniform1i(glGetUniformLocation(shader, "shadowMap"), 3);
-    glUniform1i(glGetUniformLocation(shader, "pointShadowMap"), 4);
-    glUniform1i(glGetUniformLocation(shader, "secondaryPointShadowMap"), 5);
-    glUniform1i(glGetUniformLocation(shader, "shadowsEnabled"), shadowsEnabled ? 1 : 0);
-    glUniform1i(glGetUniformLocation(shader, "shadowSamplesPerAxis"), shadowSamplesPerAxisByLevel[shadowSoftnessLevel]);
-    glUniform1f(glGetUniformLocation(shader, "shadowFilterRadius"), shadowFilterRadiusByLevel[shadowSoftnessLevel]);
-    glUniform1f(glGetUniformLocation(shader, "pointShadowFarPlane"), pointShadowFarPlane);
-
     int width, height;
     glfwGetFramebufferSize(pWindow, &width, &height);
     if (height <= 0)
@@ -1428,30 +1632,39 @@ void render()
     projectionTransform = glm::perspective(glm::radians(fov),
                                            static_cast<float>(width) / static_cast<float>(height),
                                            0.1f, sceneFarPlane);
-    glUniformMatrix4fv(glGetUniformLocation(shader, "projectionTransform"),
-                       1, GL_FALSE, glm::value_ptr(projectionTransform));
-
-    // View
     glm::mat4 view = glm::lookAt(
         cameraPos,
         cameraPos + cameraFront,
         cameraUp);
-    glUniformMatrix4fv(glGetUniformLocation(shader, "viewTransform"),
-                       1, GL_FALSE, glm::value_ptr(view));
 
-    ///////////////////////////////////////////////////////////////////////////
-    glUniformMatrix4fv(glGetUniformLocation(shader, "lightTransform"),
-                       1, GL_FALSE, glm::value_ptr(lightTransform));
+    glm::mat4 mirrorTransform = getMirrorTransform(puddleHeight);
+    glm::vec3 reflectionCameraPos = transformPoint(mirrorTransform, cameraPos);
+    glm::vec3 reflectionTarget = transformPoint(mirrorTransform, cameraPos + cameraFront);
+    glm::vec3 reflectionUp = transformDirection(mirrorTransform, cameraUp);
+    glm::mat4 reflectionView = glm::lookAt(
+        reflectionCameraPos,
+        reflectionTarget,
+        reflectionUp);
 
-    glActiveTexture(GL_TEXTURE3);
-    glBindTexture(GL_TEXTURE_2D, shadowMapTexture);
-    glActiveTexture(GL_TEXTURE4);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, pointShadowMapTextures[0]);
-    glActiveTexture(GL_TEXTURE5);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, pointShadowMapTextures[1]);
-    ///////////////////////////////////////////////////////////////////////////
+    renderReflectionTexture(currentTime,
+                            projectionTransform,
+                            reflectionView,
+                            lightTransform,
+                            reflectionCameraPos);
+
+    glClearColor(0.0f, 0.3f, 0.3f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    configureSceneShader(shader,
+                         projectionTransform,
+                         view,
+                         lightTransform,
+                         cameraPos,
+                         false,
+                         glm::vec4(0.0f));
 
     drawScene(shader, currentTime, true, true);
+    drawPuddle(projectionTransform, view, reflectionView, cameraPos, currentTime);
 
     glDepthMask(GL_FALSE);
     drawGlassBottles(shader, true);
