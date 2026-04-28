@@ -38,16 +38,39 @@ float spotZ = 0.0f;
 constexpr float spotInnerAngleDegrees = 35.0f;
 constexpr float spotOuterAngleDegrees = 45.0f;
 constexpr float shadowNearPlane = 0.5f;
-constexpr float shadowFarPlane = 45.0f;
+constexpr float shadowFarPlane = 120.0f;
 constexpr int shadowSoftnessLevels = 5;
 const int shadowSamplesPerAxisByLevel[shadowSoftnessLevels] = {1, 3, 5, 7, 9};
 const float shadowFilterRadiusByLevel[shadowSoftnessLevels] = {0.0f, 1.0f, 1.75f, 2.5f, 3.25f};
 
+constexpr float roomWidth = 60.0f;
+constexpr float roomHeight = 30.0f;
+constexpr float roomDepth = 37.5f;
+constexpr float roomHalfWidth = roomWidth * 0.5f;
+constexpr float roomHalfDepth = roomDepth * 0.5f;
+constexpr float hallwayWidth = 18.0f;
+constexpr float hallwayHalfWidth = hallwayWidth * 0.5f;
+constexpr float hallwayLength = 45.0f;
+constexpr float hallwayCenterZ = roomHalfDepth + hallwayLength * 0.5f;
+constexpr float secondRoomCenterZ = roomDepth + hallwayLength;
+constexpr float portalSideWidth = (roomWidth - hallwayWidth) * 0.5f;
+constexpr float portalSideOffsetX = hallwayHalfWidth + portalSideWidth * 0.5f;
+constexpr float cameraSideMargin = 2.0f;
+constexpr float cameraWallMargin = 1.75f;
+constexpr float roomCameraHalfWidth = roomHalfWidth - cameraSideMargin;
+constexpr float hallwayCameraHalfWidth = hallwayHalfWidth - cameraSideMargin;
+constexpr float sceneFarPlane = 160.0f;
+constexpr float pointShadowNearPlane = shadowNearPlane;
+constexpr float pointShadowFarPlane = sceneFarPlane;
+constexpr int pointLightCount = 2;
+
+glm::vec3 secondaryLightPosition(0.0f, 5.0f, secondRoomCenterZ);
+glm::vec3 secondaryLightColor(28.0f, 24.0f, 16.0f);
+
 bool shadowsEnabled = true;
 int shadowSoftnessLevel = 1;
 
-// Cube faces - 6 sprites forming a 60x30x37.5 unit cube (15x as big as chest ~4x2x2.5)
-// Positioned to contain the existing objects inside
+// Cube faces
 // Front face (positive Z)
 float cube_front[] =
 {
@@ -116,7 +139,18 @@ float cube_bottom[] =
 };
 
 
-const int NUM_MODELS = 8;
+constexpr int modelCoin = 0;
+constexpr int modelChest = 1;
+constexpr int modelRoomFront = 2;
+constexpr int modelRoomBack = 3;
+constexpr int modelRoomLeft = 4;
+constexpr int modelRoomRight = 5;
+constexpr int modelRoomTop = 6;
+constexpr int modelRoomBottom = 7;
+constexpr int modelBottle = 8;
+constexpr int modelLantern = 9;
+
+const int NUM_MODELS = 10;
 std::vector<float> vertices[NUM_MODELS];
 int vertexStrides[NUM_MODELS];
 
@@ -169,6 +203,14 @@ int chestPathSegment = 0;
 float chestPathDuration = 4.0f;
 glm::vec3 chestPos = chestPathPointA;
 
+constexpr int glassBottleCount = 3;
+const glm::vec3 glassBottlePositions[glassBottleCount] = {
+    glm::vec3(-23.0f, -14.95f, 8.0f),
+    glm::vec3(6.5f, -14.95f, 39.0f),
+    glm::vec3(18.0f, -14.95f, 78.0f),
+};
+const float glassBottleRotations[glassBottleCount] = {18.0f, -32.0f, 24.0f};
+
 void load_model(const char* filename, std::vector<float>& vertices)
 {
     std::ifstream file(filename);
@@ -210,21 +252,21 @@ void fixCoinSurfaceNormals(std::vector<float>& verts)
 
     for (std::size_t base = 0; base < verts.size(); base += stride * 3)
     {
-        float averageZ = 0.0f;
-        float averageNormalZ = 0.0f;
+        float avgZ = 0.0f;
+        float avgNz = 0.0f;
         for (int vertex = 0; vertex < 3; ++vertex)
         {
             std::size_t offset = base + static_cast<std::size_t>(vertex) * stride;
-            averageZ += verts[offset + 2];
-            averageNormalZ += verts[offset + 5];
+            avgZ += verts[offset + 2];
+            avgNz += verts[offset + 5];
         }
 
-        averageZ /= 3.0f;
-        averageNormalZ /= 3.0f;
+        avgZ /= 3.0f;
+        avgNz /= 3.0f;
 
-        bool flipFrontFacingNormals = averageZ > surfaceThreshold && averageNormalZ < -flipThreshold;
-        bool flipBackFacingNormals = averageZ < -surfaceThreshold && averageNormalZ > flipThreshold;
-        if (!flipFrontFacingNormals && !flipBackFacingNormals)
+        bool flipFront = avgZ > surfaceThreshold && avgNz < -flipThreshold;
+        bool flipBack = avgZ < -surfaceThreshold && avgNz > flipThreshold;
+        if (!flipFront && !flipBack)
             continue;
 
         for (int vertex = 0; vertex < 3; ++vertex)
@@ -273,21 +315,171 @@ float wrap01(float value)
 
 GLuint createTextureFromRgbData(const std::vector<unsigned char>& pixels, int width, int height)
 {
-    GLuint generatedTexture = 0;
-    glGenTextures(1, &generatedTexture);
-    glBindTexture(GL_TEXTURE_2D, generatedTexture);
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
     glGenerateMipmap(GL_TEXTURE_2D);
-    return generatedTexture;
+    return tex;
 }
 
 GLuint createGrayscaleTexture(int size, unsigned char value)
 {
     std::vector<unsigned char> pixels(size * size * 3, value);
+    return createTextureFromRgbData(pixels, size, size);
+}
+
+void appendVertex(std::vector<float>& verts,
+                  const glm::vec3& position,
+                  const glm::vec3& color,
+                  const glm::vec2& texCoord,
+                  const glm::vec3& normal)
+{
+    verts.push_back(position.x);
+    verts.push_back(position.y);
+    verts.push_back(position.z);
+    verts.push_back(color.r);
+    verts.push_back(color.g);
+    verts.push_back(color.b);
+    verts.push_back(texCoord.x);
+    verts.push_back(texCoord.y);
+    verts.push_back(normal.x);
+    verts.push_back(normal.y);
+    verts.push_back(normal.z);
+}
+
+void appendQuad(std::vector<float>& verts,
+                const glm::vec3& bottomLeft,
+                const glm::vec3& bottomRight,
+                const glm::vec3& topRight,
+                const glm::vec3& topLeft,
+                const glm::vec3& color,
+                const glm::vec3& normal)
+{
+    appendVertex(verts, bottomLeft, color, glm::vec2(0.0f, 0.0f), normal);
+    appendVertex(verts, bottomRight, color, glm::vec2(1.0f, 0.0f), normal);
+    appendVertex(verts, topRight, color, glm::vec2(1.0f, 1.0f), normal);
+
+    appendVertex(verts, bottomLeft, color, glm::vec2(0.0f, 0.0f), normal);
+    appendVertex(verts, topRight, color, glm::vec2(1.0f, 1.0f), normal);
+    appendVertex(verts, topLeft, color, glm::vec2(0.0f, 1.0f), normal);
+}
+
+// Helper function that allows me to define a box by giving min and max corner coordinates
+// Made this so I could make the bottle and lantern models without needing to use an external modeling program because that was a product of Thristan's genius that I couldn't utilize properly
+void appendBox(std::vector<float>& verts,
+               const glm::vec3& minCorner,
+               const glm::vec3& maxCorner,
+               const glm::vec3& color)
+{
+    appendQuad(verts,
+               glm::vec3(minCorner.x, minCorner.y, maxCorner.z),
+               glm::vec3(maxCorner.x, minCorner.y, maxCorner.z),
+               glm::vec3(maxCorner.x, maxCorner.y, maxCorner.z),
+               glm::vec3(minCorner.x, maxCorner.y, maxCorner.z),
+               color,
+               glm::vec3(0.0f, 0.0f, 1.0f));
+
+    appendQuad(verts,
+               glm::vec3(maxCorner.x, minCorner.y, minCorner.z),
+               glm::vec3(minCorner.x, minCorner.y, minCorner.z),
+               glm::vec3(minCorner.x, maxCorner.y, minCorner.z),
+               glm::vec3(maxCorner.x, maxCorner.y, minCorner.z),
+               color,
+               glm::vec3(0.0f, 0.0f, -1.0f));
+
+    appendQuad(verts,
+               glm::vec3(minCorner.x, minCorner.y, minCorner.z),
+               glm::vec3(minCorner.x, minCorner.y, maxCorner.z),
+               glm::vec3(minCorner.x, maxCorner.y, maxCorner.z),
+               glm::vec3(minCorner.x, maxCorner.y, minCorner.z),
+               color,
+               glm::vec3(-1.0f, 0.0f, 0.0f));
+
+    appendQuad(verts,
+               glm::vec3(maxCorner.x, minCorner.y, maxCorner.z),
+               glm::vec3(maxCorner.x, minCorner.y, minCorner.z),
+               glm::vec3(maxCorner.x, maxCorner.y, minCorner.z),
+               glm::vec3(maxCorner.x, maxCorner.y, maxCorner.z),
+               color,
+               glm::vec3(1.0f, 0.0f, 0.0f));
+
+    appendQuad(verts,
+               glm::vec3(minCorner.x, maxCorner.y, maxCorner.z),
+               glm::vec3(maxCorner.x, maxCorner.y, maxCorner.z),
+               glm::vec3(maxCorner.x, maxCorner.y, minCorner.z),
+               glm::vec3(minCorner.x, maxCorner.y, minCorner.z),
+               color,
+               glm::vec3(0.0f, 1.0f, 0.0f));
+
+    appendQuad(verts,
+               glm::vec3(minCorner.x, minCorner.y, minCorner.z),
+               glm::vec3(maxCorner.x, minCorner.y, minCorner.z),
+               glm::vec3(maxCorner.x, minCorner.y, maxCorner.z),
+               glm::vec3(minCorner.x, minCorner.y, maxCorner.z),
+               color,
+               glm::vec3(0.0f, -1.0f, 0.0f));
+}
+
+std::vector<float> createGlassBottleVertices()
+{
+    std::vector<float> verts;
+    glm::vec3 bottleColor(1.0f, 1.0f, 1.0f);
+
+    appendBox(verts, glm::vec3(-0.80f, 0.0f, -0.80f), glm::vec3(0.80f, 3.80f, 0.80f), bottleColor);
+    appendBox(verts, glm::vec3(-0.95f, 3.84f, -0.95f), glm::vec3(0.95f, 4.18f, 0.95f), bottleColor);
+    appendBox(verts, glm::vec3(-0.35f, 4.22f, -0.35f), glm::vec3(0.35f, 5.35f, 0.35f), bottleColor);
+    appendBox(verts, glm::vec3(-0.48f, 5.39f, -0.48f), glm::vec3(0.48f, 5.62f, 0.48f), bottleColor);
+
+    return verts;
+}
+
+std::vector<float> createLanternVertices() // Use a bunch of boxes to make a cute simple lantern (I'm really proud of this one it took a lot of time hehe)
+{
+    std::vector<float> verts;
+    glm::vec3 lanternColor(1.0f, 1.0f, 1.0f);
+
+    appendBox(verts, glm::vec3(-0.65f, -1.20f, -0.35f), glm::vec3(0.65f, 1.20f, 0.35f), lanternColor);
+    appendBox(verts, glm::vec3(-0.85f, 1.24f, -0.55f), glm::vec3(0.85f, 1.52f, 0.55f), lanternColor);
+    appendBox(verts, glm::vec3(-0.85f, -1.52f, -0.55f), glm::vec3(0.85f, -1.24f, 0.55f), lanternColor);
+
+    return verts;
+}
+
+GLuint createLanternTexture(int size)
+{
+    std::vector<unsigned char> pixels(size * size * 3);
+
+    for (int y = 0; y < size; ++y)
+    {
+        for (int x = 0; x < size; ++x)
+        {
+            float u = (static_cast<float>(x) + 0.5f) / static_cast<float>(size);
+            float v = (static_cast<float>(y) + 0.5f) / static_cast<float>(size);
+
+            bool frame = u < 0.18f || u > 0.82f || v < 0.08f || v > 0.92f;
+            bool centerBrace = v > 0.46f && v < 0.54f;
+            float dx = u - 0.5f;
+            float dy = v - 0.5f;
+            float glow = clampValue(1.0f - std::sqrt(dx * dx + dy * dy) * 1.85f, 0.0f, 1.0f);
+
+            glm::vec3 frameColor(0.23f, 0.14f, 0.05f);
+            glm::vec3 panelColor(0.72f + 0.28f * glow,
+                                 0.52f + 0.25f * glow,
+                                 0.16f + 0.16f * glow);
+            glm::vec3 color = (frame || centerBrace) ? frameColor : panelColor;
+
+            std::size_t index = static_cast<std::size_t>(y * size + x) * 3;
+            pixels[index + 0] = static_cast<unsigned char>(clampValue(color.r, 0.0f, 1.0f) * 255.0f);
+            pixels[index + 1] = static_cast<unsigned char>(clampValue(color.g, 0.0f, 1.0f) * 255.0f);
+            pixels[index + 2] = static_cast<unsigned char>(clampValue(color.b, 0.0f, 1.0f) * 255.0f);
+        }
+    }
+
     return createTextureFromRgbData(pixels, size, size);
 }
 
@@ -430,25 +622,24 @@ void addTangentsToVertices(std::vector<float>& verts)
     }
 
     const int newStride = 14;
-    std::vector<float> withTangents;
-    withTangents.reserve(vertexCount * newStride);
+    std::vector<float> result;
+    result.reserve(vertexCount * newStride);
 
     for (std::size_t vertex = 0; vertex < vertexCount; ++vertex)
     {
         std::size_t base = vertex * oldStride;
         for (int element = 0; element < oldStride; ++element)
-            withTangents.push_back(verts[base + element]);
+            result.push_back(verts[base + element]);
 
         glm::vec3 tangent = tangents[vertex];
-        withTangents.push_back(tangent.x);
-        withTangents.push_back(tangent.y);
-        withTangents.push_back(tangent.z);
+        result.push_back(tangent.x);
+        result.push_back(tangent.y);
+        result.push_back(tangent.z);
     }
 
-    verts.swap(withTangents);
+    verts.swap(result);
 }
 
-// Helper function to get position at a given time along the path
 glm::vec3 getCoinPositionOnPath(float pathTime, int pathSegment)
 {
     float t = pathTime;
@@ -552,6 +743,17 @@ glm::mat4 getLookAtRotation(glm::vec3 from, glm::vec3 to)
         return modelTransform * glm::scale(glm::mat4(1.0f), glm::vec3(chestBreath, chestBreath, chestBreath));
     }
 
+    glm::mat4 getGlassBottleModelTransform(int bottleIndex)
+    {
+        glm::mat4 modelTransform = glm::translate(glm::mat4(1.0f), glassBottlePositions[bottleIndex]);
+        return modelTransform * glm::rotate(glm::mat4(1.0f), glm::radians(glassBottleRotations[bottleIndex]), glm::vec3(0.0f, 1.0f, 0.0f));
+    }
+
+    glm::mat4 getLanternModelTransform(const glm::vec3& lanternPosition)
+    {
+        return glm::translate(glm::mat4(1.0f), lanternPosition);
+    }
+
     glm::vec3 getSpotlightUpVector()
     {
         glm::vec3 forward = glm::normalize(spotDirection);
@@ -577,6 +779,22 @@ glm::mat4 getLookAtRotation(glm::vec3 from, glm::vec3 to)
         return lightProjection * lightView;
     }
 
+    void getPointLightTransforms(const glm::vec3& pointLightPosition, glm::mat4 transforms[6]) // Ensure that the point light projects shadows in every direction
+    {
+        glm::mat4 lightProjection = glm::perspective(
+            glm::radians(90.0f),
+            1.0f,
+            pointShadowNearPlane,
+            pointShadowFarPlane);
+
+        transforms[0] = lightProjection * glm::lookAt(pointLightPosition, pointLightPosition + glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f));
+        transforms[1] = lightProjection * glm::lookAt(pointLightPosition, pointLightPosition + glm::vec3(-1.0f, 0.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f));
+        transforms[2] = lightProjection * glm::lookAt(pointLightPosition, pointLightPosition + glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        transforms[3] = lightProjection * glm::lookAt(pointLightPosition, pointLightPosition + glm::vec3(0.0f, -1.0f, 0.0f), glm::vec3(0.0f, 0.0f, -1.0f));
+        transforms[4] = lightProjection * glm::lookAt(pointLightPosition, pointLightPosition + glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f, -1.0f, 0.0f));
+        transforms[5] = lightProjection * glm::lookAt(pointLightPosition, pointLightPosition + glm::vec3(0.0f, 0.0f, -1.0f), glm::vec3(0.0f, -1.0f, 0.0f));
+    }
+
     void drawModel(GLuint activeShader, int modelIndex, const glm::mat4& modelTransform, bool bindTexture)
     {
         glUniformMatrix4fv(glGetUniformLocation(activeShader, "modelTransform"),
@@ -585,7 +803,7 @@ glm::mat4 getLookAtRotation(glm::vec3 from, glm::vec3 to)
         GLint normalDirectionLocation = glGetUniformLocation(activeShader, "normalDirection");
         if (normalDirectionLocation != -1)
         {
-            float normalDirection = modelIndex >= 2 ? -1.0f : 1.0f;
+            float normalDirection = (modelIndex >= modelRoomFront && modelIndex <= modelRoomBottom) ? -1.0f : 1.0f;
             glUniform1f(normalDirectionLocation, normalDirection);
         }
 
@@ -599,62 +817,153 @@ glm::mat4 getLookAtRotation(glm::vec3 from, glm::vec3 to)
 
         if (bindTexture)
         {
-            bool useSpecularForModel = false;
-            bool useNormalForModel = false;
+            bool useSpec = false;
+            bool useNorm = false;
             float specularStrength = specularity;
+            float materialOpacity = 1.0f;
+            glm::vec3 materialEmissionColor(0.0f, 0.0f, 0.0f);
+            float materialEmissionStrength = 0.0f;
 
             if (modelIndex == 0)
             {
-                useSpecularForModel = useCoinSpecular && specularMapTexture[0] != 0;
-                specularStrength = useSpecularForModel ? 5.0f : specularity;
+                useSpec = useCoinSpecular && specularMapTexture[0] != 0;
+                specularStrength = useSpec ? 5.0f : specularity;
             }
             else if (modelIndex == 1)
             {
-                useSpecularForModel = useChestSpecular && specularMapTexture[1] != 0;
-                useNormalForModel = useNormalMapping && normalMapTexture[1] != 0;
-                specularStrength = useSpecularForModel ? 3.0f : specularity;
+                useSpec = useChestSpecular && specularMapTexture[1] != 0;
+                useNorm = useNormalMapping && normalMapTexture[1] != 0;
+                specularStrength = useSpec ? 3.0f : specularity;
+            }
+            else if (modelIndex == modelBottle)
+            {
+                useSpec = specularMapTexture[modelBottle] != 0;
+                useNorm = useNormalMapping && normalMapTexture[modelBottle] != 0;
+                specularStrength = useSpec ? 4.0f : 1.6f;
+                materialOpacity = 0.34f;
+            }
+            else if (modelIndex == modelLantern)
+            {
+                specularStrength = 0.35f;
+                materialEmissionColor = glm::vec3(1.0f, 0.78f, 0.30f);
+                materialEmissionStrength = 2.6f;
             }
             else
             {
-                useSpecularForModel = useCubeSpecular && specularMapTexture[modelIndex] != 0;
-                useNormalForModel = useNormalMapping && normalMapTexture[modelIndex] != 0;
-                specularStrength = useSpecularForModel ? 2.0f : specularity;
+                useSpec = useCubeSpecular && specularMapTexture[modelIndex] != 0;
+                useNorm = useNormalMapping && normalMapTexture[modelIndex] != 0;
+                specularStrength = useSpec ? 2.0f : specularity;
             }
 
             GLint specColorLocation = glGetUniformLocation(activeShader, "specColor");
             if (specColorLocation != -1)
                 glUniform1f(specColorLocation, specularStrength);
 
+            GLint materialOpacityLocation = glGetUniformLocation(activeShader, "materialOpacity");
+            if (materialOpacityLocation != -1)
+                glUniform1f(materialOpacityLocation, materialOpacity);
+
+            GLint materialEmissionColorLocation = glGetUniformLocation(activeShader, "materialEmissionColor");
+            if (materialEmissionColorLocation != -1)
+                glUniform3fv(materialEmissionColorLocation, 1, glm::value_ptr(materialEmissionColor));
+
+            GLint materialEmissionStrengthLocation = glGetUniformLocation(activeShader, "materialEmissionStrength");
+            if (materialEmissionStrengthLocation != -1)
+                glUniform1f(materialEmissionStrengthLocation, materialEmissionStrength);
+
             GLint useSpecularTextureLocation = glGetUniformLocation(activeShader, "useSpecularTexture");
             if (useSpecularTextureLocation != -1)
-                glUniform1i(useSpecularTextureLocation, useSpecularForModel ? 1 : 0);
+                glUniform1i(useSpecularTextureLocation, useSpec ? 1 : 0);
 
             GLint useNormalMapLocation = glGetUniformLocation(activeShader, "useNormalMap");
             if (useNormalMapLocation != -1)
-                glUniform1i(useNormalMapLocation, useNormalForModel ? 1 : 0);
+                glUniform1i(useNormalMapLocation, useNorm ? 1 : 0);
 
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, texture[modelIndex]);
 
             glActiveTexture(GL_TEXTURE1);
-            glBindTexture(GL_TEXTURE_2D, useSpecularForModel ? specularMapTexture[modelIndex] : 0);
+            glBindTexture(GL_TEXTURE_2D, useSpec ? specularMapTexture[modelIndex] : 0);
 
             glActiveTexture(GL_TEXTURE2);
-            glBindTexture(GL_TEXTURE_2D, useNormalForModel ? normalMapTexture[modelIndex] : 0);
+            glBindTexture(GL_TEXTURE_2D, useNorm ? normalMapTexture[modelIndex] : 0);
         }
 
         glBindVertexArray(vao[modelIndex]);
         glDrawArrays(GL_TRIANGLES, 0, vertices[modelIndex].size() / vertexStrides[modelIndex]);
     }
 
-    void drawScene(GLuint activeShader, double currentTime, bool bindTexture)
+    glm::mat4 makeScaledTransform(const glm::vec3& translation, const glm::vec3& scale)
     {
-        drawModel(activeShader, 0, getCoinModelTransform(currentTime), bindTexture);
-        drawModel(activeShader, 1, getChestModelTransform(currentTime), bindTexture);
+        glm::mat4 transform = glm::translate(glm::mat4(1.0f), translation);
+        return transform * glm::scale(glm::mat4(1.0f), scale);
+    }
 
-        glm::mat4 roomTransform(1.0f);
-        for (int i = 2; i < NUM_MODELS; i++)
-            drawModel(activeShader, i, roomTransform, bindTexture);
+    void drawPortalPillars(GLuint activeShader, int wallModelIndex, const glm::mat4& baseTransform, bool bindTexture)
+    {
+        glm::vec3 pillarScale(portalSideWidth / roomWidth, 1.0f, 1.0f);
+
+        drawModel(activeShader,
+                  wallModelIndex,
+                  baseTransform * makeScaledTransform(glm::vec3(-portalSideOffsetX, 0.0f, 0.0f), pillarScale),
+                  bindTexture);
+        drawModel(activeShader,
+                  wallModelIndex,
+                  baseTransform * makeScaledTransform(glm::vec3(portalSideOffsetX, 0.0f, 0.0f), pillarScale),
+                  bindTexture);
+    }
+
+    void drawRoomShell(GLuint activeShader, const glm::mat4& roomTransform, bool openFront, bool openBack, bool bindTexture)
+    {
+        if (openFront)
+            drawPortalPillars(activeShader, modelRoomFront, roomTransform, bindTexture);
+        else
+            drawModel(activeShader, modelRoomFront, roomTransform, bindTexture);
+
+        if (openBack)
+            drawPortalPillars(activeShader, modelRoomBack, roomTransform, bindTexture);
+        else
+            drawModel(activeShader, modelRoomBack, roomTransform, bindTexture);
+
+        drawModel(activeShader, modelRoomLeft, roomTransform, bindTexture);
+        drawModel(activeShader, modelRoomRight, roomTransform, bindTexture);
+        drawModel(activeShader, modelRoomTop, roomTransform, bindTexture);
+        drawModel(activeShader, modelRoomBottom, roomTransform, bindTexture);
+    }
+
+    void drawPointLightLanterns(GLuint activeShader, bool bindTexture)
+    {
+        drawModel(activeShader, modelLantern, getLanternModelTransform(lightPosition), bindTexture);
+        drawModel(activeShader, modelLantern, getLanternModelTransform(secondaryLightPosition), bindTexture);
+    }
+
+    void drawScene(GLuint activeShader, double currentTime, bool bindTexture, bool drawLanterns)
+    {
+        drawModel(activeShader, modelCoin, getCoinModelTransform(currentTime), bindTexture);
+        drawModel(activeShader, modelChest, getChestModelTransform(currentTime), bindTexture);
+
+        glm::mat4 firstRoomTransform(1.0f);
+        drawRoomShell(activeShader, firstRoomTransform, true, false, bindTexture);
+
+        glm::mat4 hallwayTransform = makeScaledTransform(
+            glm::vec3(0.0f, 0.0f, hallwayCenterZ),
+            glm::vec3(hallwayWidth / roomWidth, 1.0f, hallwayLength / roomDepth));
+        drawModel(activeShader, modelRoomLeft, hallwayTransform, bindTexture);
+        drawModel(activeShader, modelRoomRight, hallwayTransform, bindTexture);
+        drawModel(activeShader, modelRoomTop, hallwayTransform, bindTexture);
+        drawModel(activeShader, modelRoomBottom, hallwayTransform, bindTexture);
+
+        glm::mat4 secondRoomTransform = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, secondRoomCenterZ));
+        drawRoomShell(activeShader, secondRoomTransform, false, true, bindTexture);
+
+        if (drawLanterns)
+            drawPointLightLanterns(activeShader, bindTexture);
+    }
+
+    void drawGlassBottles(GLuint activeShader, bool bindTexture)
+    {
+        for (int bottleIndex = 0; bottleIndex < glassBottleCount; ++bottleIndex)
+            drawModel(activeShader, modelBottle, getGlassBottleModelTransform(bottleIndex), bindTexture);
     }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -664,6 +973,16 @@ glm::mat4 getLookAtRotation(glm::vec3 from, glm::vec3 to)
 GLuint shadowMapFbo;      // shadow map framebuffer object
 GLuint shadowMapTexture;  // shadow map texture
 GLuint shadowMapShader;   // shadow map shader
+GLuint pointShadowMapFbo;
+GLuint pointShadowMapTextures[pointLightCount] = {};
+GLuint pointShadowMapShader;
+
+void restoreWindowViewport()
+{
+    int width, height;
+    glfwGetFramebufferSize(pWindow, &width, &height);
+    glViewport(0, 0, width, height);
+}
 
 bool setupShadowMap()
 {
@@ -703,6 +1022,57 @@ bool setupShadowMap()
     return true;
 }
 
+bool setupPointShadowMap()
+{
+    glGenFramebuffers(1, &pointShadowMapFbo);
+    glGenTextures(pointLightCount, pointShadowMapTextures);
+
+    for (int lightIndex = 0; lightIndex < pointLightCount; ++lightIndex)
+    {
+        glBindTexture(GL_TEXTURE_CUBE_MAP, pointShadowMapTextures[lightIndex]);
+        for (int face = 0; face < 6; ++face)
+        {
+            glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face,
+                         0,
+                         GL_DEPTH_COMPONENT,
+                         SHADOW_SIZE,
+                         SHADOW_SIZE,
+                         0,
+                         GL_DEPTH_COMPONENT,
+                         GL_FLOAT,
+                         NULL);
+        }
+
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, pointShadowMapFbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,
+                           GL_DEPTH_ATTACHMENT,
+                           GL_TEXTURE_CUBE_MAP_POSITIVE_X,
+                           pointShadowMapTextures[0],
+                           0);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+    {
+        std::cout << "Could not create point light shadow framebuffer.\n";
+        return false;
+    }
+
+    pointShadowMapShader = gdevLoadShader("point_shadow.vs", "point_shadow.fs");
+    if (! pointShadowMapShader)
+        return false;
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    return true;
+}
+
 void renderShadowMap(const glm::mat4& lightTransform, double currentTime)
 {
     // use the shadow framebuffer for drawing the shadow map
@@ -720,16 +1090,56 @@ void renderShadowMap(const glm::mat4& lightTransform, double currentTime)
 
     glUniformMatrix4fv(glGetUniformLocation(shadowMapShader, "lightTransform"),
                        1, GL_FALSE, glm::value_ptr(lightTransform));
-    drawScene(shadowMapShader, currentTime, false);
+    drawScene(shadowMapShader, currentTime, false, true);
+    drawGlassBottles(shadowMapShader, false);
     
     // set the framebuffer back to the default onscreen buffer
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-    // before drawing the final scene, we need to set drawing to the whole window
-    int width, height;
-    glfwGetFramebufferSize(pWindow, &width, &height);
-    glViewport(0, 0, width, height);
+    restoreWindowViewport();
 
+}
+
+void renderPointShadowMap(int lightIndex, const glm::vec3& pointLightPosition, double currentTime)
+{
+    glm::mat4 lightTransforms[6];
+    getPointLightTransforms(pointLightPosition, lightTransforms);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, pointShadowMapFbo);
+    glViewport(0, 0, SHADOW_SIZE, SHADOW_SIZE);
+    glUseProgram(pointShadowMapShader);
+
+    glUniform3fv(glGetUniformLocation(pointShadowMapShader, "lightPosition"), 1, &pointLightPosition[0]);
+    glUniform1f(glGetUniformLocation(pointShadowMapShader, "farPlane"), pointShadowFarPlane);
+
+    for (int face = 0; face < 6; ++face)
+    {
+        glFramebufferTexture2D(GL_FRAMEBUFFER,
+                               GL_DEPTH_ATTACHMENT,
+                               GL_TEXTURE_CUBE_MAP_POSITIVE_X + face,
+                               pointShadowMapTextures[lightIndex],
+                               0);
+        glClear(GL_DEPTH_BUFFER_BIT);
+
+        glUniformMatrix4fv(glGetUniformLocation(pointShadowMapShader, "lightTransform"),
+                           1,
+                           GL_FALSE,
+                           glm::value_ptr(lightTransforms[face]));
+
+        drawScene(pointShadowMapShader, currentTime, false, false);
+        drawGlassBottles(pointShadowMapShader, false);
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    restoreWindowViewport();
+
+}
+
+void renderPointShadowMaps(double currentTime)
+{
+    const glm::vec3 pointLightPositions[pointLightCount] = {lightPosition, secondaryLightPosition};
+    for (int lightIndex = 0; lightIndex < pointLightCount; ++lightIndex)
+        renderPointShadowMap(lightIndex, pointLightPositions[lightIndex], currentTime);
 }
 
 // SHADOW MAPPING CODE
@@ -744,18 +1154,18 @@ bool setup()
     for (int i = 0; i < NUM_MODELS; ++i)
         vertexStrides[i] = 11;
 
-    // function to load object data from a file (implementation omitted for brevity)
     load_model("coinarray.txt", vertices[0]);
     fixCoinSurfaceNormals(vertices[0]);
     load_model("chestarray.txt", vertices[1]);
     
-    // Load cube face vertices from static arrays
     vertices[2].assign(cube_front, cube_front + sizeof(cube_front) / sizeof(cube_front[0]));
     vertices[3].assign(cube_back, cube_back + sizeof(cube_back) / sizeof(cube_back[0]));
     vertices[4].assign(cube_left, cube_left + sizeof(cube_left) / sizeof(cube_left[0]));
     vertices[5].assign(cube_right, cube_right + sizeof(cube_right) / sizeof(cube_right[0]));
     vertices[6].assign(cube_top, cube_top + sizeof(cube_top) / sizeof(cube_top[0]));
     vertices[7].assign(cube_bottom, cube_bottom + sizeof(cube_bottom) / sizeof(cube_bottom[0]));
+    vertices[modelBottle] = createGlassBottleVertices();
+    vertices[modelLantern] = createLanternVertices();
 
     addTangentsToVertices(vertices[1]);
     vertexStrides[1] = 14;
@@ -766,7 +1176,6 @@ bool setup()
     }
 
 
-    // upload the model to the GPU (explanations omitted for brevity)
     for (int i = 0; i < NUM_MODELS; i++) {
 
         glGenVertexArrays(1, &vao[i]);
@@ -778,11 +1187,6 @@ bool setup()
         int stride = vertexStrides[i];
 
         // on the VAO, register the current VBO with the following vertex attribute layout:
-        // - the stride length of the vertex array is 11 or 14 floats
-        // - layout location 0 (position) is 3 floats and starts at the first float of the vertex array (offset 0)
-        // - layout location 1 (color) is 3 floats and starts at the fourth float (offset 3 * sizeof(float))
-        // - layout location 2 (texcoord) is 2 floats and starts at the seventh float (offset 6 * sizeof(float))
-        // - layout location 3 (normal) is 3 floats and starts at the ninth float (offset 8 * sizeof(float))
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride * sizeof(float), (void*) 0);
         glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride * sizeof(float), (void*) (3 * sizeof(float)));
         glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride * sizeof(float), (void*) (6 * sizeof(float)));
@@ -794,7 +1198,6 @@ bool setup()
             glEnableVertexAttribArray(4);
         }
 
-        // enable the layout locations so they can be used by the vertex shader
         glEnableVertexAttribArray(0);
         glEnableVertexAttribArray(1);
         glEnableVertexAttribArray(2);
@@ -821,9 +1224,13 @@ bool setup()
     GLuint coinSpecularTexture = gdevLoadTexture("specular_goldcoin.jpg", GL_REPEAT, true, true);
     GLuint chestSpecularTexture = gdevLoadTexture("specular_wood_texture.jpg", GL_REPEAT, true, true);
     GLuint cubeSpecularTexture = gdevLoadTexture("specular_brickwalltexture.jpg", GL_REPEAT, true, true);
+    GLuint bottleTexture = gdevLoadTexture("glassbottletexture.jpg", GL_REPEAT, true, true);
+    GLuint bottleSpecularTexture = gdevLoadTexture("specular_glassbottletexture.png", GL_REPEAT, true, true);
+    GLuint lanternTexture = createLanternTexture(64);
 
     GLuint chestNormalTexture = gdevLoadTexture("normmap_wood_texture.png", GL_REPEAT, true, true);
     GLuint cubeNormalTexture = gdevLoadTexture("normmap_brickwalltexture.png", GL_REPEAT, true, true);
+    GLuint bottleNormalTexture = gdevLoadTexture("normmap_glassbottletexture.png", GL_REPEAT, true, true);
 
     specularMapTexture[0] = coinSpecularTexture;
     specularMapTexture[1] = chestSpecularTexture;
@@ -834,16 +1241,22 @@ bool setup()
         specularMapTexture[i] = cubeSpecularTexture;
         normalMapTexture[i] = cubeNormalTexture;
     }
+    texture[modelBottle] = bottleTexture;
+    specularMapTexture[modelBottle] = bottleSpecularTexture;
+    normalMapTexture[modelBottle] = bottleNormalTexture;
+    texture[modelLantern] = lanternTexture;
+    specularMapTexture[modelLantern] = 0;
+    normalMapTexture[modelLantern] = 0;
     
     for (GLuint t: texture) {
         if (! t)
             return false;
     }
 
-    if (!specularMapTexture[0] || !specularMapTexture[1] || !specularMapTexture[2])
+    if (!specularMapTexture[0] || !specularMapTexture[1] || !specularMapTexture[2] || !specularMapTexture[modelBottle])
         return false;
 
-    if (!normalMapTexture[1] || !normalMapTexture[2])
+    if (!normalMapTexture[1] || !normalMapTexture[2] || !normalMapTexture[modelBottle])
         return false;
     
 
@@ -859,13 +1272,11 @@ bool setup()
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    // --- Lighting: ensure OpenGL state is ready for lighting (depth test already enabled above) ---
-    // (Uniforms for lighting will be set per-frame in render())
-    // If you want to set any static lighting state, do it here.
-
     ///////////////////////////////////////////////////////////////////////////
     // setup shadow rendering
     if (! setupShadowMap())
+        return false;
+    if (! setupPointShadowMap())
         return false;
     ///////////////////////////////////////////////////////////////////////////
 
@@ -947,16 +1358,34 @@ void render()
     lightPosition.y = lightHeight;
     spotPosition = glm::vec3(spotX, spotPosition.y, spotZ);
 
-    float cameraBoundX = 28.0f;
-    float cameraBoundZ = 17.0f;
-    if (cameraPos.x > cameraBoundX) cameraPos.x = cameraBoundX;
-    if (cameraPos.x < -cameraBoundX) cameraPos.x = -cameraBoundX;
-    if (cameraPos.z > cameraBoundZ) cameraPos.z = cameraBoundZ;
-    if (cameraPos.z < -cameraBoundZ) cameraPos.z = -cameraBoundZ;
+    float maxCameraZ = secondRoomCenterZ + roomHalfDepth - cameraWallMargin;
+    if (cameraPos.x > roomCameraHalfWidth) cameraPos.x = roomCameraHalfWidth;
+    if (cameraPos.x < -roomCameraHalfWidth) cameraPos.x = -roomCameraHalfWidth;
+    if (cameraPos.z > maxCameraZ) cameraPos.z = maxCameraZ;
+    if (cameraPos.z < -roomHalfDepth + cameraWallMargin) cameraPos.z = -roomHalfDepth + cameraWallMargin;
+
+    if (cameraPos.z > roomHalfDepth && cameraPos.z < roomHalfDepth + hallwayLength)
+    {
+        if (cameraPos.x > hallwayCameraHalfWidth) cameraPos.x = hallwayCameraHalfWidth;
+        if (cameraPos.x < -hallwayCameraHalfWidth) cameraPos.x = -hallwayCameraHalfWidth;
+    }
+
+    if (cameraPos.z > roomHalfDepth - cameraWallMargin
+        && cameraPos.z < roomHalfDepth + cameraWallMargin
+        && std::abs(cameraPos.x) > hallwayCameraHalfWidth)
+        cameraPos.z = roomHalfDepth - cameraWallMargin;
+
+    if (cameraPos.z < roomHalfDepth + hallwayLength + cameraWallMargin
+        && cameraPos.z > roomHalfDepth + hallwayLength
+        && std::abs(cameraPos.x) > hallwayCameraHalfWidth)
+    {
+        cameraPos.z = roomHalfDepth + hallwayLength + cameraWallMargin;
+    }
 
     glm::mat4 lightTransform(1.0f);
     if (shadowsEnabled)
     {
+        renderPointShadowMaps(currentTime);
         lightTransform = getSpotlightTransform();
         renderShadowMap(lightTransform, currentTime);
     }
@@ -968,6 +1397,8 @@ void render()
 
     glUniform3fv(glGetUniformLocation(shader, "lightPosition"), 1, &lightPosition[0]);
     glUniform3fv(glGetUniformLocation(shader, "lightColor"), 1, &lightColor[0]);
+    glUniform3fv(glGetUniformLocation(shader, "secondaryLightPosition"), 1, &secondaryLightPosition[0]);
+    glUniform3fv(glGetUniformLocation(shader, "secondaryLightColor"), 1, &secondaryLightColor[0]);
     glUniform1f(glGetUniformLocation(shader, "specColor"), specularity);
 
     glUniform3fv(glGetUniformLocation(shader, "spotPosition"), 1, &spotPosition[0]);
@@ -981,11 +1412,13 @@ void render()
     glUniform1i(glGetUniformLocation(shader, "specularTexture"), 1);
     glUniform1i(glGetUniformLocation(shader, "normalMap"), 2);
     glUniform1i(glGetUniformLocation(shader, "shadowMap"), 3);
+    glUniform1i(glGetUniformLocation(shader, "pointShadowMap"), 4);
+    glUniform1i(glGetUniformLocation(shader, "secondaryPointShadowMap"), 5);
     glUniform1i(glGetUniformLocation(shader, "shadowsEnabled"), shadowsEnabled ? 1 : 0);
     glUniform1i(glGetUniformLocation(shader, "shadowSamplesPerAxis"), shadowSamplesPerAxisByLevel[shadowSoftnessLevel]);
     glUniform1f(glGetUniformLocation(shader, "shadowFilterRadius"), shadowFilterRadiusByLevel[shadowSoftnessLevel]);
+    glUniform1f(glGetUniformLocation(shader, "pointShadowFarPlane"), pointShadowFarPlane);
 
-    // ... set up the projection matrix...
     int width, height;
     glfwGetFramebufferSize(pWindow, &width, &height);
     if (height <= 0)
@@ -994,7 +1427,7 @@ void render()
     glm::mat4 projectionTransform;
     projectionTransform = glm::perspective(glm::radians(fov),
                                            static_cast<float>(width) / static_cast<float>(height),
-                                           0.1f, 100.0f);
+                                           0.1f, sceneFarPlane);
     glUniformMatrix4fv(glGetUniformLocation(shader, "projectionTransform"),
                        1, GL_FALSE, glm::value_ptr(projectionTransform));
 
@@ -1007,16 +1440,22 @@ void render()
                        1, GL_FALSE, glm::value_ptr(view));
 
     ///////////////////////////////////////////////////////////////////////////
-    // ... set up the light transformation (for looking up the shadow map)...
     glUniformMatrix4fv(glGetUniformLocation(shader, "lightTransform"),
                        1, GL_FALSE, glm::value_ptr(lightTransform));
 
-    // ... set the active texture...
     glActiveTexture(GL_TEXTURE3);
     glBindTexture(GL_TEXTURE_2D, shadowMapTexture);
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, pointShadowMapTextures[0]);
+    glActiveTexture(GL_TEXTURE5);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, pointShadowMapTextures[1]);
     ///////////////////////////////////////////////////////////////////////////
 
-    drawScene(shader, currentTime, true);
+    drawScene(shader, currentTime, true, true);
+
+    glDepthMask(GL_FALSE);
+    drawGlassBottles(shader, true);
+    glDepthMask(GL_TRUE);
 }
 
 void processInput(GLFWwindow *window)
@@ -1141,7 +1580,6 @@ int main(int argc, char** argv)
         // do rendering in a loop until the user closes the window
         while (! glfwWindowShouldClose(pWindow))
         {
-            // Process inputs for player movement
             processInput(pWindow);
             // render our next frame
             // (by default, GLFW uses double-buffering with a front and back buffer;

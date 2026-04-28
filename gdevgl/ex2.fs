@@ -19,11 +19,14 @@ uniform sampler2D specularTexture;
 uniform sampler2D normalMap;
 uniform int useSpecularTexture;
 uniform int useNormalMap;
+uniform float materialOpacity;
 out vec4 fragmentColor;
 
 uniform vec3 cameraPos;
 uniform vec3 lightPosition;
 uniform vec3 lightColor;
+uniform vec3 secondaryLightPosition;
+uniform vec3 secondaryLightColor;
 uniform float specColor;
 
 float ambColor = 0.2;
@@ -40,9 +43,37 @@ uniform vec3 spotColor;
 
 in vec4 shaderLightSpacePosition;
 uniform sampler2D shadowMap;
+uniform samplerCube pointShadowMap;
+uniform samplerCube secondaryPointShadowMap;
 uniform bool shadowsEnabled;
 uniform int shadowSamplesPerAxis;
 uniform float shadowFilterRadius;
+uniform float pointShadowFarPlane;
+uniform vec3 materialEmissionColor;
+uniform float materialEmissionStrength;
+
+const vec3 pointShadowOffsets[20] = vec3[](
+    vec3(0.0f, 0.0f, 0.0f),
+    vec3(1.0f, 1.0f, 1.0f),
+    vec3(1.0f, -1.0f, 1.0f),
+    vec3(-1.0f, 1.0f, 1.0f),
+    vec3(-1.0f, -1.0f, 1.0f),
+    vec3(1.0f, 1.0f, -1.0f),
+    vec3(1.0f, -1.0f, -1.0f),
+    vec3(-1.0f, 1.0f, -1.0f),
+    vec3(-1.0f, -1.0f, -1.0f),
+    vec3(1.0f, 1.0f, 0.0f),
+    vec3(1.0f, -1.0f, 0.0f),
+    vec3(-1.0f, 1.0f, 0.0f),
+    vec3(-1.0f, -1.0f, 0.0f),
+    vec3(1.0f, 0.0f, 1.0f),
+    vec3(1.0f, 0.0f, -1.0f),
+    vec3(-1.0f, 0.0f, 1.0f),
+    vec3(-1.0f, 0.0f, -1.0f),
+    vec3(0.0f, 1.0f, 1.0f),
+    vec3(0.0f, 1.0f, -1.0f),
+    vec3(0.0f, -1.0f, 1.0f)
+);
 
 float randomValue(vec2 seed)
 {
@@ -71,7 +102,7 @@ float getSpecularStrength()
     return max(specularSample.r, max(specularSample.g, specularSample.b));
 }
 
-float getShadowAmount(vec3 norm)
+float getSpotShadowAmount(vec3 norm)
 {
     if (!shadowsEnabled || shaderLightSpacePosition.w <= 0.0f)
         return 0.0f;
@@ -93,7 +124,7 @@ float getShadowAmount(vec3 norm)
 
     int halfWindow = shadowSamplesPerAxis / 2;
     float occlusion = 0.0f;
-    float samplesTaken = 0.0f;
+    float count = 0.0f;
 
     float rotationAngle = randomValue(position.xy + worldSpacePos.xz) * 6.28318530718f;
     mat2 rotation = mat2(cos(rotationAngle), -sin(rotationAngle),
@@ -115,11 +146,41 @@ float getShadowAmount(vec3 norm)
             float sampleDepth = texture(shadowMap, sampleUv).r;
 
             occlusion += (position.z - bias > sampleDepth) ? 1.0f : 0.0f;
-            samplesTaken += 1.0f;
+            count += 1.0f;
         }
     }
 
-    return samplesTaken > 0.0f ? (occlusion / samplesTaken) : 0.0f;
+    return count > 0.0f ? (occlusion / count) : 0.0f;
+}
+
+float getPointShadowAmount(vec3 norm, vec3 pointLightPosition, samplerCube shadowSampler)
+{
+    if (!shadowsEnabled)
+        return 0.0f;
+
+    vec3 fragmentToLight = worldSpacePos - pointLightPosition;
+    float currentDepth = length(fragmentToLight);
+    if (currentDepth <= 0.0001f || currentDepth >= pointShadowFarPlane)
+        return 0.0f;
+
+    vec3 pointLightVec = normalize(pointLightPosition - worldSpacePos);
+    float normalAlignment = max(dot(norm, pointLightVec), 0.0f);
+    float bias = max(0.04f, 0.12f * (1.0f - normalAlignment));
+    int activeSamples = shadowFilterRadius > 0.0f ? min(20, shadowSamplesPerAxis * 2 + 1) : 1;
+    float diskRadius = shadowFilterRadius > 0.0f ? shadowFilterRadius * 0.08f : 0.0f;
+    float occlusion = 0.0f;
+
+    for (int sampleIndex = 0; sampleIndex < 20; ++sampleIndex)
+    {
+        if (sampleIndex >= activeSamples)
+            break;
+
+        vec3 sampleDirection = fragmentToLight + pointShadowOffsets[sampleIndex] * diskRadius;
+        float closestDepth = texture(shadowSampler, sampleDirection).r * pointShadowFarPlane;
+        occlusion += (currentDepth - bias > closestDepth) ? 1.0f : 0.0f;
+    }
+
+    return occlusion / float(activeSamples);
 }
 
 void main()
@@ -130,20 +191,34 @@ void main()
     vec3 viewDir = normalize(cameraPos - worldSpacePos);
     float specularStrength = getSpecularStrength();
 
-    float lightWorldDistance = length(lightPosition - worldSpacePos);
-    float attenuation = 1.0 / (constant + linear * lightWorldDistance + quadratic * (lightWorldDistance * lightWorldDistance));
+    float lightDist = length(lightPosition - worldSpacePos);
+    float attenuation = 1.0 / (constant + linear * lightDist + quadratic * (lightDist * lightDist));
     
     vec3 lightVec = normalize(lightPosition - worldSpacePos);
+    float pointShadowAmount = getPointShadowAmount(norm, lightPosition, pointShadowMap);
     float pointDiff = max(dot(lightVec, norm), 0.0);
     vec3 pointHalfVec = normalize(lightVec + viewDir);
     float pointSpec = pointDiff > 0.0f ? pow(max(dot(norm, pointHalfVec), 0.0f), shininess) : 0.0f;
 
     vec3 pointAmbient = lightColor * ambColor * attenuation;
-    vec3 pointDiffuse = lightColor * pointDiff * attenuation;
-    vec3 pointSpecular = lightColor * specColor * 3.0f * pointSpec * specularStrength * attenuation;
+    vec3 pointDiffuse = lightColor * pointDiff * attenuation * (1.0f - pointShadowAmount);
+    vec3 pointSpecular = lightColor * specColor * 3.0f * pointSpec * specularStrength * attenuation * (1.0f - pointShadowAmount);
+
+    float secDist = length(secondaryLightPosition - worldSpacePos);
+    float secondaryAttenuation = 1.0 / (constant + linear * secDist + quadratic * (secDist * secDist));
+
+    vec3 secondaryLightVec = normalize(secondaryLightPosition - worldSpacePos);
+    float secondaryPointShadowAmount = getPointShadowAmount(norm, secondaryLightPosition, secondaryPointShadowMap);
+    float secondaryPointDiff = max(dot(secondaryLightVec, norm), 0.0);
+    vec3 secondaryPointHalfVec = normalize(secondaryLightVec + viewDir);
+    float secondaryPointSpec = secondaryPointDiff > 0.0f ? pow(max(dot(norm, secondaryPointHalfVec), 0.0f), shininess) : 0.0f;
+
+    vec3 secondaryPointAmbient = secondaryLightColor * ambColor * secondaryAttenuation;
+    vec3 secondaryPointDiffuse = secondaryLightColor * secondaryPointDiff * secondaryAttenuation * (1.0f - secondaryPointShadowAmount);
+    vec3 secondaryPointSpecular = secondaryLightColor * specColor * 3.0f * secondaryPointSpec * specularStrength * secondaryAttenuation * (1.0f - secondaryPointShadowAmount);
 
     vec3 spotLightVec = normalize(spotPosition - worldSpacePos);
-    float shadowAmount = getShadowAmount(norm);
+    float spotShadowAmount = getSpotShadowAmount(norm);
 
     float spotDiff = max(dot(norm, spotLightVec), 0.0);
     vec3 spotHalfVec = normalize(spotLightVec + viewDir);
@@ -156,11 +231,16 @@ void main()
     float spotIntensity = clamp((theta - spotOuterCutoff) / epsilon, 0.0, 1.0);
 
     vec3 spotAmbient = spotColor * ambColor * spotIntensity * 0.3f;
-    vec3 spotDiffuse = spotColor * spotDiff * spotIntensity;
-    vec3 spotSpecular = spotColor * specColor * 3.0f * spotSpec * specularStrength * (1.0f - shadowAmount) * spotIntensity;
+    vec3 spotDiffuse = spotColor * spotDiff * (1.0f - spotShadowAmount) * spotIntensity;
+    vec3 spotSpecular = spotColor * specColor * 3.0f * spotSpec * specularStrength * (1.0f - spotShadowAmount) * spotIntensity;
 
-    vec3 finalLitColor = texColor * (pointAmbient + pointDiffuse + spotAmbient + (1.0f - shadowAmount) * spotDiffuse)
-                       + pointSpecular + spotSpecular;
+    vec3 emission = texColor * materialEmissionColor * materialEmissionStrength;
 
-    fragmentColor = vec4(finalLitColor, texSample.a);
+    vec3 finalLitColor = texColor * (pointAmbient + pointDiffuse
+                                   + secondaryPointAmbient + secondaryPointDiffuse
+                                   + spotAmbient + spotDiffuse)
+                       + pointSpecular + secondaryPointSpecular + spotSpecular
+                       + emission;
+
+    fragmentColor = vec4(finalLitColor, texSample.a * materialOpacity);
 }

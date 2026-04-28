@@ -29,8 +29,7 @@ float lightHeight = 2.0f;
 int pauseLight = 1;
 float pausedTime = 0.0f;
 
-// Cube faces - 6 sprites forming a 60x30x37.5 unit cube (15x as big as chest ~4x2x2.5)
-// Positioned to contain the existing objects inside
+// Cube faces
 // Front face (positive Z)
 float cube_front[] =
 {
