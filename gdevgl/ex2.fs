@@ -153,6 +153,15 @@ float getSpotShadowAmount(vec3 norm)
     return count > 0.0f ? (occlusion / count) : 0.0f;
 }
 
+mat3 getPointShadowBasis(vec3 forward)
+{
+    vec3 referenceAxis = abs(forward.y) > 0.98f ? vec3(1.0f, 0.0f, 0.0f)
+                                               : vec3(0.0f, 1.0f, 0.0f);
+    vec3 tangent = normalize(cross(referenceAxis, forward));
+    vec3 bitangent = cross(forward, tangent);
+    return mat3(tangent, bitangent, forward);
+}
+
 float getPointShadowAmount(vec3 norm, vec3 pointLightPosition, samplerCube shadowSampler)
 {
     if (!shadowsEnabled)
@@ -166,16 +175,30 @@ float getPointShadowAmount(vec3 norm, vec3 pointLightPosition, samplerCube shado
     vec3 pointLightVec = normalize(pointLightPosition - worldSpacePos);
     float normalAlignment = max(dot(norm, pointLightVec), 0.0f);
     float bias = max(0.04f, 0.12f * (1.0f - normalAlignment));
-    int activeSamples = shadowFilterRadius > 0.0f ? min(20, shadowSamplesPerAxis * 2 + 1) : 1;
-    float diskRadius = shadowFilterRadius > 0.0f ? shadowFilterRadius * 0.08f : 0.0f;
+    int activeSamples = shadowFilterRadius > 0.0f
+                      ? min(20, 1 + (shadowSamplesPerAxis * shadowSamplesPerAxis) / 4)
+                      : 1;
+    float normalizedDepth = currentDepth / pointShadowFarPlane;
+    float diskRadius = shadowFilterRadius > 0.0f
+                     ? shadowFilterRadius * (0.04f + normalizedDepth * 0.08f)
+                     : 0.0f;
     float occlusion = 0.0f;
+
+    vec3 forward = normalize(fragmentToLight);
+    mat3 basis = getPointShadowBasis(forward);
+    float rotationAngle = randomValue(worldSpacePos.xy + worldSpacePos.zx + pointLightPosition.xy) * 6.28318530718f;
+    mat2 rotation = mat2(cos(rotationAngle), -sin(rotationAngle),
+                         sin(rotationAngle),  cos(rotationAngle));
 
     for (int sampleIndex = 0; sampleIndex < 20; ++sampleIndex)
     {
         if (sampleIndex >= activeSamples)
             break;
 
-        vec3 sampleDirection = fragmentToLight + pointShadowOffsets[sampleIndex] * diskRadius;
+        vec3 kernelOffset = pointShadowOffsets[sampleIndex];
+        vec2 rotatedPlanarOffset = rotation * kernelOffset.xy;
+        vec3 sampleDirection = fragmentToLight
+                             + (basis * vec3(rotatedPlanarOffset, kernelOffset.z)) * diskRadius;
         float closestDepth = texture(shadowSampler, sampleDirection).r * pointShadowFarPlane;
         occlusion += (currentDepth - bias > closestDepth) ? 1.0f : 0.0f;
     }

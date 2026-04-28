@@ -22,7 +22,7 @@
 // change this to your desired window attributes
 #define WINDOW_WIDTH  1280
 #define WINDOW_HEIGHT 720
-#define WINDOW_TITLE  "Hello Transform (use WASD and arrow keys)"
+#define WINDOW_TITLE  "Dungeon Scene (WASD move, mouse look, P toggle shadows, N/M softness)"
 GLFWwindow *pWindow;
 
 glm::vec3 lightPosition(1.0f, 5.0f, 1.0f);
@@ -39,8 +39,8 @@ constexpr float spotInnerAngleDegrees = 35.0f;
 constexpr float spotOuterAngleDegrees = 45.0f;
 constexpr float shadowNearPlane = 0.5f;
 constexpr float shadowFarPlane = 120.0f;
-constexpr int shadowSoftnessLevels = 5;
-const int shadowSamplesPerAxisByLevel[shadowSoftnessLevels] = {1, 3, 5, 7, 9};
+constexpr int shadowSoftnessLevels = 5; // Shadow softness levels added to reduce the strain on FPS optionally (N = <, and M = >)
+const int shadowSamplesPerAxisByLevel[shadowSoftnessLevels] = {1, 3, 5, 7, 9}; // I have no idea how else to make this more optimized so I just added "settings" for it :(
 const float shadowFilterRadiusByLevel[shadowSoftnessLevels] = {0.0f, 1.0f, 1.75f, 2.5f, 3.25f};
 
 constexpr float roomWidth = 60.0f;
@@ -68,7 +68,7 @@ glm::vec3 secondaryLightPosition(0.0f, 5.0f, secondRoomCenterZ);
 glm::vec3 secondaryLightColor(28.0f, 24.0f, 16.0f);
 
 bool shadowsEnabled = true;
-int shadowSoftnessLevel = 1;
+int shadowSoftnessLevel = 2;
 
 // Cube faces
 // Front face (positive Z)
