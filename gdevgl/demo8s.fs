@@ -9,4 +9,5 @@
 
 void main()
 {
+    // Depth is written automatically by OpenGL - nothing else needed here
 }

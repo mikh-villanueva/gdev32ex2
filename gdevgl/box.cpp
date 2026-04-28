@@ -4,17 +4,20 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <gdev.h>
 
+// Window configuration
 #define WINDOW_WIDTH  1280
 #define WINDOW_HEIGHT 720
 #define WINDOW_TITLE  "Lighting Cube"
 
 GLFWwindow *pWindow;
 
+// GPU object IDs for the single cube
 GLuint vao;
 GLuint vbo;
 GLuint shader;
 GLuint textureID;
 
+// Camera state for free-look movement
 glm::vec3 cameraPos   = glm::vec3(0.0f, 0.0f,  3.0f);
 glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
 glm::vec3 cameraUp    = glm::vec3(0.0f, 1.0f,  0.0f);
@@ -100,6 +103,7 @@ float cube[] =
 
 bool setup()
 {
+    // Create GPU buffers and upload the cube vertex data
     glGenVertexArrays(1, &vao);
     glGenBuffers(1, &vbo);
 
@@ -123,24 +127,31 @@ bool setup()
     glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 11*sizeof(float), (void*)(8*sizeof(float)));
     glEnableVertexAttribArray(3);
 
+    // Load the shader program
     shader = gdevLoadShader("ex2.vs", "ex2.fs");
     if (!shader) return false;
 
+    // Load the brick wall texture
     textureID = gdevLoadTexture("brickwalltexture.jpg", GL_REPEAT, true, true);
     if (!textureID) return false;
 
+    // Enable depth testing so closer geometry wins
     glEnable(GL_DEPTH_TEST);
     return true;
 }
 
 void render()
 {
+    // Clear the screen for a fresh frame
     glClearColor(0.1f, 0.2f, 0.3f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+    // Activate the shader program
     glUseProgram(shader);
 
+    // Update light Y from the adjustable height value
     lightPosition.y = lightHeight;
+    // Update spotlight position from adjustable X and Z values
     spotPosition = glm::vec3(spotX, spotPosition.y, spotZ);
 
     // Light uniforms
@@ -191,12 +202,14 @@ void render()
     glDrawArrays(GL_TRIANGLES, 0, sizeof(cube)/11*sizeof(float)); // 6 faces × 6 vertices
 }
 
+// Closes the window when Escape is pressed
 void handleKeys(GLFWwindow* pWindow, int key, int scancode, int action, int mode)
 {
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
         glfwSetWindowShouldClose(pWindow, GL_TRUE);
 }
 
+// Adjusts the OpenGL viewport to match the window
 void handleResize(GLFWwindow* pWindow, int width, int height)
 {
     glViewport(0, 0, width, height);
@@ -204,6 +217,7 @@ void handleResize(GLFWwindow* pWindow, int width, int height)
 
 int main()
 {
+    // Initialize GLFW and request OpenGL 3.3 core
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
@@ -212,6 +226,7 @@ int main()
     pWindow = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE, NULL, NULL);
     if (!pWindow) return -1;
 
+    // Make the window active and set up input callbacks
     glfwMakeContextCurrent(pWindow);
     glfwSetKeyCallback(pWindow, handleKeys);
     glfwSetFramebufferSizeCallback(pWindow, handleResize);
@@ -220,6 +235,7 @@ int main()
 
     gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
 
+    // Run setup then loop until the window is closed
     if (setup())
     {
         while (!glfwWindowShouldClose(pWindow))
@@ -235,8 +251,10 @@ int main()
     return 0;
 }
 
+// Handles WASD movement and light adjustment keys
 void processInput(GLFWwindow *window)
 {
+    // Compute delta time for speed
     float currentFrame = glfwGetTime();
     deltaTime = currentFrame - lastFrame;
     lastFrame = currentFrame;  
@@ -267,9 +285,9 @@ void processInput(GLFWwindow *window)
         spotZ -= 0.01f;
 }
 
+// Mouse look
 void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 {
-    if (firstMouse)
     {
         lastX = xpos;
         lastY = ypos;
@@ -293,6 +311,7 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos)
     if(pitch < -89.0f)
         pitch = -89.0f;
 
+    // Update camera direction
     glm::vec3 direction;
     direction.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
     direction.y = sin(glm::radians(pitch));

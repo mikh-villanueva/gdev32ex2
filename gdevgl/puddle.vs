@@ -1,13 +1,16 @@
 #version 330 core
 
+// Puddle quad inputs
 layout (location = 0) in vec3 vertexPosition;
 layout (location = 1) in vec2 vertexTexCoord;
 
+// Transform matrices
 uniform mat4 modelTransform;
 uniform mat4 viewTransform;
 uniform mat4 projectionTransform;
 uniform mat4 reflectionViewProjection;
 
+// Outputs for the fragment shader
 out vec3 worldSpacePos;
 out vec2 puddleTexCoord;
 out vec4 reflectionClipPos;

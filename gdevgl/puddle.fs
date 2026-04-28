@@ -1,9 +1,11 @@
 #version 330 core
 
+// Interpolated world position and UV from the vertex shader
 in vec3 worldSpacePos;
 in vec2 puddleTexCoord;
 in vec4 reflectionClipPos;
 
+// Reflection texture and camera info for water rendering
 uniform sampler2D reflectionTexture;
 uniform vec3 cameraPos;
 uniform float time;
@@ -30,6 +32,7 @@ void main()
     if (edgeAlpha <= 0.02f)
         discard;
 
+    // Project reflection UVs from clip space
     vec2 reflectionUv = reflectionClipPos.xy / max(reflectionClipPos.w, 0.0001f);
     reflectionUv = reflectionUv * 0.5f + 0.5f;
 
@@ -52,6 +55,7 @@ void main()
     float fresnel = pow(1.0f - max(dot(viewDirection, vec3(0.0f, 1.0f, 0.0f)), 0.0f), 2.0f);
     float centerDarkening = smoothstep(1.0f, 0.18f, radialDistance);
 
+    // Mix reflection with water color
     vec3 tintedReflection = mix(reflectionColor, waterTint, 0.35f + 0.15f * fresnel);
     vec3 finalColor = mix(tintedReflection, waterTint, 0.18f + 0.12f * puddleTexCoord.y);
     finalColor = mix(finalColor, finalColor * 0.86f + waterTint * 0.14f, centerDarkening * 0.35f);

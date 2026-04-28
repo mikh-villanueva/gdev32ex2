@@ -7,35 +7,43 @@
 
 #version 330 core
 
+// Vertex inputs
 layout (location = 0) in vec3 vertexPosition;
 layout (location = 1) in vec3 vertexColor;
 layout (location = 2) in vec2 vertexTexCoord;
 layout (location = 3) in vec3 vertexNormal;
 layout (location = 4) in vec3 vertexTangent;
 
+// Transform matrices
 uniform mat4 projectionTransform;
 uniform mat4 viewTransform;
 uniform mat4 modelTransform;
 uniform mat4 normalTransform;
+// Flip normals for room walls
 uniform float normalDirection;
 
+// Pass-through outputs
 out vec3 shaderColor;
 out vec2 shaderTexCoord;
 
+// World-space outputs for lighting
 out vec3 worldSpacePos;
 out vec3 worldSpaceNorm;
 out vec3 worldTangent;
 out vec3 worldBitangent;
 out vec3 objColor;
 
+// For shadow mapping
 uniform mat4 lightTransform;
 out vec4 shaderLightSpacePosition;
 
 void main()
 {
+    // World position and normal
     worldSpacePos = (modelTransform * vec4(vertexPosition, 1.0f)).xyz;
     worldSpaceNorm = normalize((normalTransform * vec4(vertexNormal, 0.0f)).xyz * normalDirection);
 
+    // Build TBN for normal mapping
     vec3 tangentWorld = (normalTransform * vec4(vertexTangent, 0.0f)).xyz;
     if (length(tangentWorld) < 0.0001)
     {
@@ -49,9 +57,11 @@ void main()
     worldBitangent = normalize(cross(worldSpaceNorm, tangentWorld));
     objColor = vertexColor;
 
+    // Output to fragment shader
     gl_Position = projectionTransform * viewTransform * modelTransform * vec4(vertexPosition, 1.0f);
     shaderColor = vertexColor;
     shaderTexCoord = vertexTexCoord;
 
+    // Light-space position for shadows
     shaderLightSpacePosition = lightTransform * modelTransform * vec4(vertexPosition, 1.0f);
 }

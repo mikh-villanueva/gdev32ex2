@@ -16,5 +16,6 @@ uniform mat4 modelTransform;
 
 void main()
 {
+    // Put the vertex in light space
     gl_Position = lightTransform * modelTransform * vec4(vertexPosition, 1.0f);
 }

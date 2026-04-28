@@ -26,6 +26,7 @@ glm::vec3 lightPosition;
 glm::vec3 lightColor = glm::vec3(1.0f, 1.0f, 1.0f);
 float specularity = 0.5f;
 float lightHeight = 2.0f;
+// Used to pause the light animation for debugging
 int pauseLight = 1;
 float pausedTime = 0.0f;
 
@@ -134,6 +135,7 @@ int chestPathSegment = 0;
 float chestPathDuration = 4.0f;
 glm::vec3 chestPos = chestPathPointA;
 
+// Loads a model from file
 void load_model(const char* filename, std::vector<float>& vertices)
 {
     std::ifstream file(filename);
@@ -160,7 +162,7 @@ void load_model(const char* filename, std::vector<float>& vertices)
     }
 }
 
-// Helper function to get position at a given time along the path
+// Position at a given time on the path
 glm::vec3 getCoinPositionOnPath(float pathTime, int pathSegment)
 {
     float t = pathTime;
@@ -180,6 +182,7 @@ glm::vec3 getCoinPositionOnPath(float pathTime, int pathSegment)
     return glm::mix(start, end, t);
 }
 
+// Chest position on path
 glm::vec3 getChestPositionOnPath(float pathTime, int pathSegment)
 {
     float t = pathTime;
@@ -200,6 +203,7 @@ glm::vec3 getChestPositionOnPath(float pathTime, int pathSegment)
 }
 
 
+// Returns the next waypoint on the triangle path after the current segment
 glm::vec3 getNextWaypoint(int pathSegment)
 {
     if (pathSegment == 0) {
@@ -211,6 +215,7 @@ glm::vec3 getNextWaypoint(int pathSegment)
     }
 }
 
+// Face toward a point
 glm::mat4 getLookAtRotation(glm::vec3 from, glm::vec3 to)
 {
     glm::vec3 forward = glm::normalize(to - from);
@@ -377,6 +382,7 @@ void render()
 
     float cameraBoundX = 28.0f;
     float cameraBoundZ = 17.0f;
+    // Clamp camera position to stay inside the room
     if (x > cameraBoundX) x = cameraBoundX;
     if (x < -cameraBoundX) x = -cameraBoundX;
     if (z > cameraBoundZ) z = cameraBoundZ;
@@ -396,9 +402,11 @@ void render()
     if (pitch < -1.5f)
         pitch = -1.5f;
 
+    // Clear the screen for a fresh frame
     glClearColor(0.0f, 0.3f, 0.3f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+    // Activate the lighting shader
     glUseProgram(shader);
 
     // ... set up the projection matrix...
